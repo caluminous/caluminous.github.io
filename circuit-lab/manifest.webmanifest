@@ -1,0 +1,15 @@
+{
+  "name": "Circuit Lab — build, learn, code",
+  "short_name": "Circuit Lab",
+  "description": "Realistic circuit building sandbox with real Arduino-C coding for ESP32 & Arduino, lessons and levels. Works fully offline.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0d1017",
+  "theme_color": "#0d1017",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
