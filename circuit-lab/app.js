@@ -1016,6 +1016,30 @@ function renderTray(){
   document.querySelectorAll('.traybtn').forEach(b=> b.onclick = ()=>addPart(b.dataset.type));
 }
 
+/* ============================ KEYBOARD (desktop) ============================ */
+document.addEventListener('keydown', ev=>{
+  const t = ev.target;
+  if (t && (t.tagName==='TEXTAREA' || t.tagName==='INPUT' || t.tagName==='SELECT' || t.isContentEditable)) return;
+  if (ev.key==='Escape'){
+    if ($('#modal').classList.contains('open')){ $('#modal').classList.remove('open'); return; }
+    if ($('#solder').classList.contains('open')){ $('#solderClose').click(); return; }
+    if ($('#editor').classList.contains('open')){ $('#edClose').click(); return; }
+    if (app.pendingWire){ app.pendingWire = null; renderAll(); return; }
+    select(null); renderAll(); return;
+  }
+  if ($('#editor').classList.contains('open') || $('#modal').classList.contains('open') || $('#solder').classList.contains('open')) return;
+  if (ev.key==='Backspace' || ev.key==='Delete'){
+    if (app.sel?.kind==='part'){ deletePart(app.sel.id); ev.preventDefault(); }
+    else if (app.sel?.kind==='wire'){
+      app.wires = app.wires.filter(w=>w.id!==app.sel.id);
+      select(null); renderAll(); save(); ev.preventDefault();
+    }
+  } else if ((ev.key==='r' || ev.key==='R') && app.sel?.kind==='part'){
+    const p = app.parts.find(x=>x.id===app.sel.id);
+    if (p){ p.rot = ((p.rot||0)+90)%360; renderAll(); save(); }
+  }
+});
+
 /* ============================ SAVE / LOAD ============================ */
 let saveTimer = null;
 function save(){
