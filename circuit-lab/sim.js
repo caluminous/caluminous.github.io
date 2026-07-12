@@ -5,15 +5,29 @@
 
 const Sim = (() => {
 
-  function buildNets(parts, wires){
+  function buildNets(parts, wires, links){
     const parent = {};
     const find = k => { while (parent[k] !== k) { parent[k] = parent[parent[k]]; k = parent[k]; } return k; };
     const uni = (a,b) => { a=find(a); b=find(b); if (a!==b) parent[b]=a; };
     for (const p of parts){
       const d = PARTS.defs[p.type];
       for (const t of d.terms){ const k = p.id+':'+t.id; parent[k]=k; }
+      if (d.holes){
+        // breadboard strips: holes sharing a group are one net; perfboard pads are their own group
+        for (const h of d.holes.call(d, p)){
+          const hk = p.id+':'+h.id, gk = p.id+':G:'+h.group;
+          if (parent[hk]===undefined) parent[hk]=hk;
+          if (parent[gk]===undefined) parent[gk]=gk;
+          uni(hk, gk);
+        }
+        // perfboard solder traces join pads on the copper side
+        for (const s of (p.props.solders||[])){
+          const ka = p.id+':'+s[0], kb = p.id+':'+s[1];
+          if (parent[ka]!==undefined && parent[kb]!==undefined) uni(ka,kb);
+        }
+      }
     }
-    for (const w of wires){
+    for (const w of (links ? wires.concat(links) : wires)){
       const ka = w.a.part+':'+w.a.term, kb = w.b.part+':'+w.b.term;
       if (parent[ka]!==undefined && parent[kb]!==undefined) uni(ka,kb);
     }
@@ -100,9 +114,10 @@ const Sim = (() => {
     return { netV, elResults, netOf };
   }
 
-  /* Iterate: LED on/off states + module/board power flags until stable. */
-  function solve(parts, wires, dt){
-    const nets = buildNets(parts, wires);
+  /* Iterate: LED on/off states + module/board power flags until stable.
+     links = wire-less connections (snapped terminals, legs plugged into board holes). */
+  function solve(parts, wires, dt, links){
+    const nets = buildNets(parts, wires, links);
     let res = null;
     const vAt = (p,t)=> res? (res.netV[nets.find(p.id+':'+t)]??0) : 0;
 

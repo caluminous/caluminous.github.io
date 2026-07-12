@@ -428,21 +428,73 @@ const PARTS = (() => {
   },
 
   perfboard: {
-    name:'Perfboard', cat:'Basics', w:220, h:150, deco:true,
+    name:'Perfboard', cat:'Basics', w:240, h:160, deco:true, boardBase:true,
     terms:[],
-    defaults:{},
+    defaults:{solders:[]},
+    // isolated pads: every hole is its own electrical node until soldered
+    holes(){
+      const hs = [];
+      for (let r=0;r<7;r++) for (let c=0;c<11;c++)
+        hs.push({ id:`H:${r}-${c}`, x:20+c*20, y:20+r*20, group:`${r}-${c}` });
+      return hs;
+    },
     elements(){ return []; },
     draw(p){
       let holes='';
-      for(let y=14;y<150;y+=13) for(let x=14;x<220;x+=13)
-        holes += `<circle cx="${x}" cy="${y}" r="2.2" fill="#4a3618" stroke="#caa76a" stroke-width="1.4"/>`;
-      return `<rect x="0" y="0" width="220" height="150" rx="6" fill="#b98a3e" stroke="#8a6526"/>
-      <rect x="2" y="2" width="216" height="146" rx="5" fill="#caa14e"/>
-      ${holes}`;
+      for (const h of this.holes())
+        holes += `<circle cx="${h.x}" cy="${h.y}" r="3" fill="#4a3618" stroke="#caa76a" stroke-width="2"/>`;
+      const n = (p.props.solders||[]).length;
+      return `<rect x="0" y="0" width="240" height="160" rx="6" fill="#b98a3e" stroke="#8a6526"/>
+      <rect x="2" y="2" width="236" height="156" rx="5" fill="#caa14e"/>
+      ${holes}
+      ${n?label(120,154,`${n} solder joint${n>1?'s':''} on back — flip to edit`,7.5,'#6e5320'):''}`;
     },
     info:{ title:'Perfboard (prototyping board)', body:
-`A grid of copper-ringed holes on 2.54 mm spacing. In real life you push component legs through and <b>solder</b> them, then join points with wire — the step between breadboard prototype and a custom PCB.
-<br><br><b>In the app:</b> it's a work surface — drop it down and arrange parts on top to lay out a project like you would before soldering.`},
+`A grid of copper-ringed holes on 2.54 mm spacing. Unlike a breadboard, <b>the holes are NOT connected to anything</b> — you push component legs through, then flip the board over and <b>solder</b> traces between the pads to build the circuit permanently.
+<br><br><b>In the app:</b> drop parts so their legs sit in holes (they'll snap in), then select the board and hit <b>🔁 Flip &amp; solder</b>. On the copper side, drag from pad to pad to lay solder traces — the circuit only conducts where you've soldered, exactly like real life.`},
+  },
+
+  breadboard: {
+    name:'Breadboard', cat:'Basics', w:380, h:300, deco:true, boardBase:true,
+    terms:[],
+    defaults:{},
+    // real breadboard internals: power rails run the full row; terminal strips
+    // connect the 5 holes of one column (a–e / f–j), split by the centre channel
+    holes(){
+      const hs = [];
+      for (let c=0;c<17;c++){
+        const x = 30+c*20;
+        hs.push({id:`H:pt-${c}`, x, y:24,  group:'rail+T'});
+        hs.push({id:`H:nt-${c}`, x, y:44,  group:'rail-T'});
+        for (let r=0;r<5;r++) hs.push({id:`H:a${r}-${c}`, x, y:78+r*20,  group:'T'+c});
+        for (let r=0;r<5;r++) hs.push({id:`H:b${r}-${c}`, x, y:182+r*20, group:'B'+c});
+        hs.push({id:`H:pb-${c}`, x, y:256, group:'rail+B'});
+        hs.push({id:`H:nb-${c}`, x, y:276, group:'rail-B'});
+      }
+      return hs;
+    },
+    elements(){ return []; },
+    draw(p){
+      let holes='';
+      for (const h of this.holes())
+        holes += `<rect x="${h.x-3}" y="${h.y-3}" width="6" height="6" rx="1.2" fill="#1c2027"/>`;
+      return `<rect x="0" y="0" width="380" height="300" rx="8" fill="#e8e4da" stroke="#b8b2a4"/>
+      <rect x="2" y="2" width="376" height="296" rx="7" fill="#f2eee6"/>
+      <line x1="14" y1="14" x2="366" y2="14" stroke="#e05555" stroke-width="3"/>
+      <line x1="14" y1="54" x2="366" y2="54" stroke="#4488dd" stroke-width="3"/>
+      <line x1="14" y1="246" x2="366" y2="246" stroke="#e05555" stroke-width="3"/>
+      <line x1="14" y1="286" x2="366" y2="286" stroke="#4488dd" stroke-width="3"/>
+      <text x="8" y="28" font-size="10" fill="#e05555">+</text><text x="8" y="48" font-size="10" fill="#4488dd">−</text>
+      <text x="8" y="260" font-size="10" fill="#e05555">+</text><text x="8" y="280" font-size="10" fill="#4488dd">−</text>
+      <rect x="6" y="166" width="368" height="8" rx="3" fill="#ddd8cc"/>
+      ${holes}`;
+    },
+    info:{ title:'Breadboard (solderless prototyping)', body:
+`The classic way to build circuits with <b>no soldering and no mess</b>. Metal clips hide under the holes:
+<br>• each <b>column of 5 holes</b> (above or below the centre channel) is connected together
+<br>• the long <b>+ and − rails</b> along the edges are each one continuous strip — use them to distribute power
+<br>• the centre channel splits the two halves, so chips can straddle it.
+<br><br><b>In the app:</b> drag parts onto the board — their legs snap into holes and connect through the strips automatically, no wires needed. Use wires only to bring battery power to the rails.`},
   },
 
   /* ============ MICROCONTROLLERS ============ */
@@ -496,10 +548,17 @@ const PARTS = (() => {
     },
     info:{ title:'ESP32 DevKit (32-bit MCU + WiFi/BT)', body:
 `A powerful microcontroller board: dual-core 240 MHz, WiFi + Bluetooth, and lots of GPIO. Runs <b>3.3 V logic</b> — its pins output 3.3 V, and its ADC reads 0–3.3 V as 0–4095.
-<br><br><b>Powering it:</b> USB, or 5 V into <b>VIN</b> (an onboard regulator makes 3.3 V). The <b>3V3 pin</b> can power small sensors (&lt;600 mA total).
-<br><b>Pins to know:</b> GPIO 2 = built-in LED (<code>LED_BUILTIN</code>). GPIO 34–39 are <b>input-only</b>. Any pin can do PWM via <code>analogWrite()</code>.
-<br><b>⚠️ GPIO limit:</b> ~40 mA per pin max — enough for an LED, never a motor.
-<br><br>Select the board and hit <b>&lt;/&gt; Code</b> to program it in real Arduino-style C.`},
+<br><br><b>Every pin on this board, explained:</b>
+<table class="xp">
+<tr><td>3V3</td><td>3.3 V <b>output</b> from the onboard regulator — powers sensors and small parts (max ~600 mA). Can also power the board if fed 3.3 V.</td></tr>
+<tr><td>GND</td><td>Ground — 0 V reference. <b>Every</b> circuit part must eventually connect back here to complete the loop.</td></tr>
+<tr><td>VIN</td><td>Voltage IN: feed 5 V here (USB charger, boost converter) to power the board without USB.</td></tr>
+<tr><td>D2</td><td>GPIO 2 — general purpose in/out, also wired to the little blue onboard LED (<code>LED_BUILTIN</code>).</td></tr>
+<tr><td>D4, D13, D25, D26, D32, D33</td><td>GPIO — set as <code>OUTPUT</code> to drive LEDs/buzzers (HIGH = 3.3 V, LOW = 0 V), or <code>INPUT</code>/<code>INPUT_PULLUP</code> to read buttons. All support PWM via <code>analogWrite()</code>. D25/26/32/33 also read analog voltages.</td></tr>
+<tr><td>D34</td><td><b>Input-only</b> GPIO (no output circuitry inside the chip!). Perfect for <code>analogRead()</code> of pots and sensors — try to make it an OUTPUT and you'll get an error, same as real life.</td></tr>
+</table>
+<b>⚠️ GPIO limit:</b> ~40 mA per pin — enough for an LED (with resistor), never a motor.
+<br><br>Select the board and hit <b>&lt;/&gt; Code</b> to program it in real Arduino-style C — the 📖 Reference button in the editor explains every function.`},
   },
 
   uno: {
@@ -548,26 +607,46 @@ const PARTS = (() => {
     },
     info:{ title:'Arduino Uno (ATmega328P)', body:
 `The classic beginner board: 16 MHz 8-bit chip, <b>5 V logic</b>, 14 digital pins, 6 analog inputs (0–5 V read as 0–1023).
-<br><br><b>Pins to know:</b> D13 = built-in LED (<code>LED_BUILTIN</code>). Only pins <b>3, 5, 6, 9, 10, 11</b> support PWM (<code>analogWrite</code>) — try it on another pin here and you'll get the same surprise as on real hardware.
-<br><b>Powering it:</b> USB, or 7–12 V into VIN. The 5 V pin can supply small loads.
-<br><br>Select the board and hit <b>&lt;/&gt; Code</b> to write real Arduino C for it.`},
+<br><br><b>Every pin on this board, explained:</b>
+<table class="xp">
+<tr><td>D2, D13</td><td>Digital GPIO — <code>OUTPUT</code> drives 5 V/0 V, <code>INPUT_PULLUP</code> reads buttons. D13 is also the built-in LED (<code>LED_BUILTIN</code>). <b>No PWM</b> on these.</td></tr>
+<tr><td>D3, D6, D9, D11</td><td>Digital GPIO <b>with PWM</b> (the ~ pins) — the only ones where <code>analogWrite()</code> works, exactly like real hardware.</td></tr>
+<tr><td>A0–A2</td><td>Analog inputs — <code>analogRead()</code> converts 0–5 V into 0–1023. Can also be used as plain digital pins.</td></tr>
+<tr><td>5V</td><td>5 V power <b>output</b> (from USB or the regulator) — powers external parts, up to ~500 mA.</td></tr>
+<tr><td>3V3</td><td>A small 3.3 V output for low-voltage sensors (max ~150 mA).</td></tr>
+<tr><td>GND</td><td>Ground — 0 V reference; the return path for every circuit.</td></tr>
+<tr><td>VIN</td><td>Power the board from a battery here (officially 7–12 V; in this sim ~5 V+ works).</td></tr>
+</table>
+Select the board and hit <b>&lt;/&gt; Code</b> — the 📖 Reference button in the editor explains every function.`},
   },
 
   };
 
   const order = ['battery_aa','battery_2aa','battery_9v','lipo','usb5v','tp4056','boost',
-                 'resistor','led','button','switch','pot','capacitor','buzzer','motor','perfboard',
-                 'esp32','uno'];
+                 'resistor','led','button','switch','pot','capacitor','buzzer','motor',
+                 'breadboard','perfboard','esp32','uno'];
+
+  function xform(part, pts){
+    const d = defs[part.type], cx = d.w/2, cy = d.h/2;
+    const rad = (part.rot||0)*Math.PI/180, cos=Math.cos(rad), sin=Math.sin(rad);
+    return pts.map(t=>{
+      const dx = t.x-cx, dy = t.y-cy;
+      return { ...t, x: part.x+cx + dx*cos - dy*sin, y: part.y+cy + dx*sin + dy*cos };
+    });
+  }
 
   return { defs, order, E_VALUES, fmtOhm, fmt, LED_COLORS, SVG_DEFS,
-    termPos(part){
-      const d = defs[part.type], cx = d.w/2, cy = d.h/2;
-      const rad = (part.rot||0)*Math.PI/180, cos=Math.cos(rad), sin=Math.sin(rad);
-      return d.terms.map(t=>{
-        const dx = t.x-cx, dy = t.y-cy;
-        return { id:t.id, x: part.x+cx + dx*cos - dy*sin, y: part.y+cy + dx*sin + dy*cos };
-      });
-    }
+    termPos(part){ return xform(part, defs[part.type].terms); },
+    holePos(part){
+      const d = defs[part.type];
+      return d.holes ? xform(part, d.holes.call(d, part)) : [];
+    },
+    /* all electrical connection points of a part: terminals + board holes */
+    connPoints(part){
+      const d = defs[part.type];
+      const pts = xform(part, d.terms);
+      return d.holes ? pts.concat(xform(part, d.holes.call(d, part)).map(h=>({...h, hole:true}))) : pts;
+    },
   };
 })();
 if (typeof module!=='undefined') module.exports = PARTS;

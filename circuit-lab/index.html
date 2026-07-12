@@ -56,6 +56,29 @@ main{ position:fixed; inset:0; top:49px; display:flex; flex-direction:column; }
 @keyframes pulse{ from{ r:5.5; } to{ r:9; } }
 #levelChip{ position:absolute; top:10px; left:10px; display:none; align-items:center; gap:6px;
   background:var(--bg3); border:1px solid var(--line); padding:7px 12px; border-radius:999px; font-size:12.5px; font-weight:600; cursor:pointer; box-shadow:0 4px 14px #0007; }
+#btn3d{ position:absolute; top:10px; right:10px; background:var(--bg3); border:1px solid var(--line); color:var(--fg);
+  border-radius:12px; padding:9px 13px; font-size:13px; font-weight:800; cursor:pointer; box-shadow:0 4px 14px #0007; }
+#btn3d.active{ background:var(--acc); color:#04121f; border-color:var(--acc); }
+#canvas.tilted .part{ filter:drop-shadow(0 10px 6px rgba(0,0,0,.45)); }
+
+/* wire editing */
+.wjoint{ fill:#4da3ff; stroke:#0d1017; stroke-width:2; cursor:grab; }
+.wjoint.wghost{ fill:#4da3ff55; stroke:#4da3ff; stroke-dasharray:3 3; stroke-width:1.5; }
+.wjoint.wend{ fill:#fff; stroke:#4da3ff; stroke-width:3; }
+.swatch{ width:26px; height:26px; border-radius:99px; border:2px solid transparent; cursor:pointer; }
+.swatch.on{ border-color:#fff; }
+
+/* wireless connection glow */
+.linkdot{ fill:none; stroke:#3ecf72; stroke-width:2.5; pointer-events:none; opacity:.9; }
+.linkdot.inhole{ stroke:#3ecf72aa; stroke-width:2; }
+
+/* solder view */
+#solder{ display:none; position:fixed; inset:0; z-index:70; background:#151009; flex-direction:column; }
+#solder.open{ display:flex; }
+.solderhint{ padding:8px 14px; font-size:12.5px; color:#d8b985; background:#1d1509; border-bottom:1px solid #33260f; line-height:1.45; }
+#solderSvg{ flex:1; min-height:0; width:100%; touch-action:none; }
+.strace{ cursor:pointer; }
+.spad{ cursor:crosshair; }
 
 /* selection panel */
 #panel{ display:none; background:var(--bg2); border-top:1px solid var(--line); padding:8px 10px; }
@@ -117,7 +140,11 @@ select,input[type=range]{ accent-color:var(--acc); background:var(--bg3); color:
 @media (max-width:520px){ .gcard{ flex-direction:column; } .gpic{ width:100%; justify-content:center; } }
 
 /* ---------- modal ---------- */
-#modal{ display:none; position:fixed; inset:0; background:#000a; z-index:60; align-items:flex-end; justify-content:center; }
+#modal{ display:none; position:fixed; inset:0; background:#000a; z-index:90; align-items:flex-end; justify-content:center; }
+.xp{ width:100%; border-collapse:collapse; font-size:12.5px; margin:8px 0; }
+.xp td{ border-top:1px solid var(--line); padding:7px 8px; vertical-align:top; line-height:1.5; }
+.xp td:first-child{ font-family:ui-monospace,Menlo,Consolas,monospace; color:#9fd4ff; white-space:pre-wrap; width:38%; }
+.infotext h3{ margin:14px 0 4px; font-size:14px; }
 #modal.open{ display:flex; }
 .sheet{ background:var(--bg2); border:1px solid var(--line); border-radius:18px 18px 0 0; max-width:640px; width:100%;
   max-height:82vh; overflow-y:auto; padding:16px 18px calc(18px + var(--safe-b)); position:relative; }
@@ -174,6 +201,7 @@ select,input[type=range]{ accent-color:var(--acc); background:var(--bg3); color:
   <div id="canvasWrap">
     <svg id="canvas" xmlns="http://www.w3.org/2000/svg"><defs id="canvasDefs"></defs><g id="scene"></g></svg>
     <div id="levelChip"></div>
+    <button id="btn3d" title="Tilt the workbench">3D</button>
   </div>
   <div id="panel"></div>
   <div id="tray"></div>
@@ -190,6 +218,17 @@ select,input[type=range]{ accent-color:var(--acc); background:var(--bg3); color:
 
 <div id="modal"><div class="sheet"><button id="modalClose">✕</button><div id="modalBody"></div></div></div>
 
+<div id="solder">
+  <div class="edhead">
+    <b>🔁 Copper side — soldering</b>
+    <span class="st" id="solderCount"></span>
+    <span class="spacer" style="flex:1"></span>
+    <button class="btn ok" id="solderClose">✓ Done</button>
+  </div>
+  <div class="solderhint">Drag from pad to pad to lay a solder trace. Tap a trace to remove it. Silver pins = component legs poking through from the front.</div>
+  <svg id="solderSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+</div>
+
 <div id="editor">
   <div class="edhead">
     <b id="edTitle">Code</b>
@@ -204,6 +243,7 @@ select,input[type=range]{ accent-color:var(--acc); background:var(--bg3); color:
     <select id="edExamples"><option value="">Examples…</option>
       <option>Blink</option><option>Built-in LED</option><option>Button → LED</option><option>Fade (PWM)</option>
       <option>Analog read</option><option>Serial counter</option><option>Alarm</option></select>
+    <button class="btn" id="edRef">📖 Reference</button>
     <span class="spacer" style="flex:1"></span>
     <button class="btn" id="edClear">Clear serial</button>
   </div>

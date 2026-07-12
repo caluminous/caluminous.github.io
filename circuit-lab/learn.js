@@ -87,9 +87,47 @@ const LEVELS = [
   check(app){ return app.parts.some(p => p.type==='led' && p.state.broken); },
 },
 
-/* ===== UNIT 2 · REAL POWER ===== */
+/* ===== UNIT 2 · BOARDS ===== */
 {
-  id:'charge-lipo', unit:'2 · Power', title:'Charge a LiPo',
+  id:'breadboard-basics', unit:'2 · Boards', title:'Breadboard: No Wires Needed',
+  goal:'Light an LED on a breadboard using the internal strips — at least 2 legs plugged into holes.',
+  body:`<p>Time to build like the pros prototype. Add a <b>breadboard</b> and remember its secret wiring:</p>
+  <ul><li>each <b>column of 5 holes</b> is one connected strip (above/below the channel)</li>
+  <li>the long <b>+ / − rails</b> are continuous — power highways</li></ul>
+  <p><b>Build:</b></p>
+  <ol><li>Wire a 2×AA holder: <b>+</b> to a hole in the red rail, <b>−</b> to the blue rail.</li>
+  <li>Drop a resistor so one leg is in the + rail and the other lands in a column.</li>
+  <li>Drop the LED so its <b>+ leg shares that same column</b> and its − leg lands in another column.</li>
+  <li>Wire that last column (or leg) back to the − rail… or just bridge with the LED leg into the blue rail directly!</li></ol>
+  <p>Watch for the little <b>green rings</b> — they show legs clicking into holes. Parts snap to the grid when you drop them close.</p>`,
+  hint:'Legs in the SAME column are connected; different columns are not. If the LED is dark, check both shared columns and the LED polarity.',
+  check(app){
+    const bb = app.parts.find(p=>p.type==='breadboard');
+    if (!bb) return false;
+    const plugged = app.links.filter(l=>[l.a,l.b].some(e=>e.part===bb.id && e.term.startsWith('H:'))).length;
+    return plugged >= 2 && app.parts.some(p=>p.type==='led' && !p.state.broken && (p.state.brightness||0) > 0.1);
+  },
+},
+{
+  id:'solder-it', unit:'2 · Boards', title:'Flip It & Solder It',
+  goal:'Light an LED through a perfboard: legs in holes, at least 2 solder traces on the back doing real work.',
+  body:`<p>Perfboard is the permanent version — and unlike a breadboard, <b>the holes connect to nothing</b> until you solder.</p>
+  <ol><li>Add a <b>perfboard</b> and place a resistor and LED so their legs snap into holes.</li>
+  <li>Wire battery <b>+</b> to the hole next to the resistor's first leg, and battery <b>−</b> to a hole near the LED's − leg (wires can plug straight into holes).</li>
+  <li>Nothing lights yet — the pads are isolated! Select the board → <b>🔁 Flip &amp; solder</b>.</li>
+  <li>On the copper side, drag solder traces: battery pad → resistor leg pad, resistor other leg → LED + pad, LED − pad → battery − pad (skip any hop where two legs already share a hole).</li></ol>
+  <p>Hit ✓ Done and admire the front: the LED lights only through the joints you soldered. That's a real, permanent circuit.</p>`,
+  hint:'In the flip view, silver pins show where legs poke through. Each trace connects exactly two pads — chain them to route power through the board.',
+  check(app){
+    const pb = app.parts.find(p=>p.type==='perfboard');
+    return !!(pb && (pb.props.solders||[]).length >= 2 &&
+      app.parts.some(p=>p.type==='led' && !p.state.broken && (p.state.brightness||0) > 0.1));
+  },
+},
+
+/* ===== UNIT 3 · REAL POWER ===== */
+{
+  id:'charge-lipo', unit:'3 · Power', title:'Charge a LiPo',
   goal:'Get a TP4056 actively charging a LiPo battery (red charge LED on).',
   body:`<p>LiPo cells must be charged carefully — that's the TP4056's whole job.</p>
   <p><b>Build:</b> USB 5V <b>+ → IN+</b>, USB <b>− → IN−</b>, then LiPo <b>+ → B+</b> and LiPo <b>− → B−</b>.</p>
@@ -98,7 +136,7 @@ const LEVELS = [
   check(app){ return app.parts.some(p => p.type==='tp4056' && p.state.chargingOut); },
 },
 {
-  id:'powerbank', unit:'2 · Power', title:'Build a Power Bank',
+  id:'powerbank', unit:'3 · Power', title:'Build a Power Bank',
   goal:'Power an ESP32 from a LiPo through a boost converter — ESP32 running with its USB power OFF.',
   body:`<p>This is literally how commercial power banks work: LiPo (3.7 V) → <b>boost converter</b> → 5 V out.</p>
   <p><b>Build:</b> LiPo + → boost <b>IN+</b>, LiPo − → boost <b>IN−</b>. Then boost <b>OUT+ → ESP32 VIN</b>, boost <b>OUT− → ESP32 GND</b>.</p>
@@ -109,7 +147,7 @@ const LEVELS = [
 
 /* ===== UNIT 3 · CODE ===== */
 {
-  id:'blink', unit:'3 · Code', title:'Blink — Hello, World!',
+  id:'blink', unit:'4 · Code', title:'Blink — Hello, World!',
   goal:'Make an external LED blink using real code (the app must see it turn on and off at least twice).',
   body:`<p>Time to program a microcontroller — with actual Arduino C, like flashing a real board.</p>
   <ol><li>Add an <b>ESP32</b> (leave USB power ON), a resistor (220 Ω) and an LED.</li>
@@ -124,7 +162,17 @@ void loop() {
   digitalWrite(13, LOW);
   delay(500);
 }</pre>
-  <p>Hit <b>▶ Upload & Run</b>. <code>setup()</code> runs once; <code>loop()</code> repeats forever — exactly like real firmware.</p>`,
+  <p>Hit <b>▶ Upload & Run</b>. Here's what every single line does:</p>
+  <table class="xp">
+  <tr><td>void setup() { }</td><td>A function that runs <b>once</b> when the board powers up. "void" = it returns nothing. All your one-time preparation goes between its { }.</td></tr>
+  <tr><td>pinMode(13, OUTPUT);</td><td>Tells the chip pin 13 will be an <b>output</b> (a controllable 3.3 V tap) rather than an input. Do this once per pin, in setup.</td></tr>
+  <tr><td>void loop() { }</td><td>Runs top-to-bottom, then instantly starts again, forever — the heartbeat of every Arduino program.</td></tr>
+  <tr><td>digitalWrite(13, HIGH);</td><td>Switches pin 13 ON — it now outputs 3.3 V, pushing current through your resistor + LED. <code>HIGH</code> is just the number 1.</td></tr>
+  <tr><td>delay(500);</td><td>Pause everything for 500 milliseconds (half a second). Without delays the blink would be too fast to see!</td></tr>
+  <tr><td>digitalWrite(13, LOW);</td><td>Switches pin 13 OFF — 0 V, no current, LED dark. <code>LOW</code> = 0.</td></tr>
+  <tr><td>; and { }</td><td>Every statement ends with a semicolon; curly braces group statements into a block. Miss one and you'll get an error with the line number — read it, fix it, re-upload.</td></tr>
+  </table>
+  <p><b>Why pin 13 → GND?</b> Current flows out of pin 13 (3.3 V) → resistor (limits it to ~6 mA) → LED (lights) → back into <b>GND</b>, completing the loop through the board.</p>`,
   hint:'LED dark? Check: anode (+) toward the pin, resistor in series, GND wired, code uploaded with no red errors.',
   check(app, mem){
     const led = app.parts.find(p=>p.type==='led' && !p.state.broken);
@@ -136,7 +184,7 @@ void loop() {
   },
 },
 {
-  id:'button-in', unit:'3 · Code', title:'Read the World',
+  id:'button-in', unit:'4 · Code', title:'Read the World',
   goal:'Use digitalRead() so a button controls an LED — pass by holding the button so the LED lights under code control.',
   body:`<p>Outputs are half the story — now read an input.</p>
   <ol><li>Wire a <b>push button</b> between ESP32 <b>D4</b> and <b>GND</b>.</li>
@@ -152,7 +200,15 @@ void loop() {
     digitalWrite(13, LOW);
   }
 }</pre>
-  <p><b>INPUT_PULLUP</b> = a built-in resistor gently holds the pin HIGH; pressing the button pulls it to GND, so <b>pressed reads LOW</b>. This backwards-feeling trick is used in almost every real gadget.</p>`,
+  <p><b>INPUT_PULLUP</b> = a built-in resistor gently holds the pin HIGH; pressing the button pulls it to GND, so <b>pressed reads LOW</b>. This backwards-feeling trick is used in almost every real gadget.</p>
+  <p>Line by line:</p>
+  <table class="xp">
+  <tr><td>pinMode(4, INPUT_PULLUP);</td><td>Pin 4 becomes an input, with the chip's internal ~45 kΩ resistor tied to 3.3 V. Unpressed, the pin idles at 3.3 V (HIGH) instead of floating randomly.</td></tr>
+  <tr><td>digitalRead(4)</td><td>Measures the voltage on pin 4 <i>right now</i>: above ~1.65 V → returns HIGH (1), below → LOW (0).</td></tr>
+  <tr><td>if (... == LOW) { } else { }</td><td>A decision: run the first block when the comparison is true, otherwise the else block. <code>==</code> compares (a single <code>=</code> would assign — classic bug!).</td></tr>
+  <tr><td>// pressed</td><td>A comment — everything after // is ignored by the compiler, it's a note for humans.</td></tr>
+  </table>
+  <p><b>Why does pressing read LOW?</b> The button connects pin 4 to GND. GND (0 V) easily "wins" against the weak 45 kΩ pull-up, so the pin voltage collapses to 0 V. Release, and the pull-up drags it back to 3.3 V.</p>`,
   hint:'Run the code, then tap-and-hold the button (use HOLD in its panel). The LED should follow your finger.',
   check(app){
     const btn = app.parts.find(p=>p.type==='button');
@@ -162,7 +218,7 @@ void loop() {
   },
 },
 {
-  id:'fade', unit:'3 · Code', title:'Fade — PWM Magic',
+  id:'fade', unit:'4 · Code', title:'Fade — PWM Magic',
   goal:'Use analogWrite() to smoothly fade an LED (the app must see the duty cycle sweep a wide range).',
   body:`<p>Digital pins are only ON or OFF — so how do you dim? <b>PWM</b>: switch so fast (thousands of times a second) that the average is what matters. <code>analogWrite(pin, 0–255)</code> sets that average.</p>
 <pre>void setup() {
@@ -177,6 +233,14 @@ void loop() {
     delay(20);
   }
 }</pre>
+  <p>Line by line:</p>
+  <table class="xp">
+  <tr><td>for (int b = 0; b <= 255; b += 5)</td><td>A counting loop, three parts: <b>start</b> (make a variable b = 0), <b>keep going while</b> b ≤ 255, <b>after each lap</b> add 5 to b. So b goes 0, 5, 10 … 255.</td></tr>
+  <tr><td>int b</td><td>Declares a whole-number variable named b. It only exists inside this loop.</td></tr>
+  <tr><td>analogWrite(13, b);</td><td>Sets pin 13's PWM duty to b out of 255. b=0 → always off, b=128 → on half the time (half brightness), b=255 → fully on.</td></tr>
+  <tr><td>delay(20);</td><td>20 ms per step × 52 steps ≈ 1 second per fade direction.</td></tr>
+  <tr><td>b -= 5</td><td>Shorthand for b = b − 5 — the second loop counts back down, fading out.</td></tr>
+  </table>
   <p>Fun fact: on an Arduino Uno only pins 3, 5, 6, 9, 10, 11 can PWM — try pin 13 on a Uno here and you'll get the authentic error.</p>`,
   hint:'Keep the LED + resistor on pin 13 of the ESP32. Watch it breathe.',
   check(app, mem){
@@ -194,7 +258,7 @@ void loop() {
   },
 },
 {
-  id:'analog-in', unit:'3 · Code', title:'Sense It — analogRead',
+  id:'analog-in', unit:'4 · Code', title:'Sense It — analogRead',
   goal:'Read a potentiometer with analogRead() and print values to the Serial monitor (values must change as you turn the knob).',
   body:`<p>Wire the pot as a <b>voltage divider</b>: pin <b>A</b> → ESP32 <b>3V3</b>, pin <b>B</b> → <b>GND</b>, wiper <b>W</b> → <b>D34</b> (an input-only analog pin).</p>
 <pre>void setup() {
@@ -206,7 +270,15 @@ void loop() {
   Serial.println(raw);
   delay(200);
 }</pre>
-  <p>Run it, open the Serial panel in the code editor, and drag the pot's knob — the numbers (0–4095 on ESP32) follow the wiper voltage. This is how every sensor knob, joystick and light sensor works.</p>`,
+  <p>Run it, open the Serial panel in the code editor, and drag the pot's knob — the numbers (0–4095 on ESP32) follow the wiper voltage. This is how every sensor knob, joystick and light sensor works.</p>
+  <table class="xp">
+  <tr><td>Serial.begin(115200);</td><td>Opens the serial link between board and computer at 115200 bits/second — needed once before any printing.</td></tr>
+  <tr><td>int raw = analogRead(34);</td><td>Measures the voltage on pin 34 and stores it in a new variable: 0 V → 0, 3.3 V → 4095, halfway → ~2048.</td></tr>
+  <tr><td>Serial.print("knob: ");</td><td>Sends text to the serial monitor <i>without</i> ending the line — so the number lands on the same line.</td></tr>
+  <tr><td>Serial.println(raw);</td><td>Prints the variable's current value, then a newline. print vs println is just "stay on line" vs "end the line".</td></tr>
+  <tr><td>delay(200);</td><td>5 readings a second — without this the monitor would be a blur of thousands of lines.</td></tr>
+  </table>
+  <p><b>Why pin 34 and why the divider?</b> Pin 34 is input-only, ideal for measuring. The pot's two ends sit at 3.3 V and 0 V; the wiper (W) taps a point in between, so turning the knob sweeps its voltage smoothly from 0 → 3.3 V.</p>`,
   hint:'No numbers? Check Serial.begin is called and the wiper (middle pin W) goes to pin 34.',
   check(app, mem){
     for (const p of app.parts){
@@ -219,7 +291,7 @@ void loop() {
   },
 },
 {
-  id:'alarm', unit:'3 · Code', title:'Final Boss: Burglar Alarm',
+  id:'alarm', unit:'4 · Code', title:'Final Boss: Burglar Alarm',
   goal:'Combine everything: button + buzzer + LED + code. Pass when the buzzer beeps under code control while the button is held.',
   body:`<p>Design brief — a door alarm:</p>
   <ul><li>Button between <b>D4</b> and <b>GND</b> (the "door sensor")</li>
@@ -242,7 +314,14 @@ void loop() {
     delay(150);
   }
 }</pre>
-  <p>Hold the button — flashing light, beeping siren, serial log. You've built a real embedded system: sensor in, decisions in code, actuators out.</p>`,
+  <p>Hold the button — flashing light, beeping siren, serial log. You've built a real embedded system: sensor in, decisions in code, actuators out.</p>
+  <table class="xp">
+  <tr><td>three pinMode calls</td><td>Declare every pin's job up front: pin 4 senses (input with pull-up), pins 25 and 13 act (outputs). Boards don't guess — you must tell them.</td></tr>
+  <tr><td>if (digitalRead(4) == LOW)</td><td>The whole alarm hinges on this: is the "door" (button) triggered right now? loop() re-asks hundreds of times a second.</td></tr>
+  <tr><td>digitalWrite(25, HIGH);</td><td>3.3 V onto the buzzer's + leg → the buzzer's internal oscillator screams. Its − leg must be on GND to complete the loop.</td></tr>
+  <tr><td>delay(150); … LOW … delay(150);</td><td>ON 150 ms, OFF 150 ms — this half-and-half rhythm is what turns a constant beep into a pulsing siren.</td></tr>
+  <tr><td>Serial.println("INTRUDER!");</td><td>Your event log — real alarms do exactly this to a server instead of a serial port.</td></tr>
+  </table>`,
   hint:'Enable sound (☰ menu) to hear it. Any variation that beeps the buzzer from code while the button is held will pass.',
   check(app){
     const btn = app.parts.find(p=>p.type==='button');

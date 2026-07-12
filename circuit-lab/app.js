@@ -3,6 +3,8 @@
 
 const app = {
   parts: [], wires: [], nextId: 1,
+  links: [],            // wireless connections: snapped terminals & legs in board holes
+  view3d: false,
   sel: null,            // {kind:'part'|'wire', id}
   pendingWire: null,    // {part, term, sticky}
   runtimes: {},         // partId → MCU.Runtime
@@ -33,32 +35,124 @@ function applyVB(){
   const h = app.vb.w * (r.height/Math.max(1,r.width));
   canvas.setAttribute('viewBox', `${app.vb.x} ${app.vb.y} ${app.vb.w} ${h}`);
 }
-function svgPt(cx, cy){
-  const r = canvas.getBoundingClientRect();
-  return { x: app.vb.x + (cx-r.left)/r.width*app.vb.w,
-           y: app.vb.y + (cy-r.top)/r.width*app.vb.w };
+
+/* ---- 3D workbench view: an invertible affine tilt applied to the whole scene,
+   so building/wiring stays fully interactive while tilted ---- */
+let VIEW = new DOMMatrix();
+function viewStr(){ return `matrix(${VIEW.a} ${VIEW.b} ${VIEW.c} ${VIEW.d} ${VIEW.e} ${VIEW.f})`; }
+function setView3d(on){
+  app.view3d = on;
+  if (on){
+    const r = canvas.getBoundingClientRect();
+    const cx = app.vb.x + app.vb.w/2, cy = app.vb.y + app.vb.w*(r.height/Math.max(1,r.width))/2;
+    VIEW = new DOMMatrix().translate(cx, cy).skewX(-16).scale(1, 0.62).translate(-cx, -cy);
+  } else VIEW = new DOMMatrix();
+  canvas.classList.toggle('tilted', on);
+  const b = $('#btn3d'); if (b){ b.textContent = on ? '2D' : '3D'; b.classList.toggle('active', on); }
+  renderAll();
+}
+function svgPt(cx, cy){ // client pixels → world coordinates (through viewBox AND tilt)
+  // getScreenCTM reflects the REAL current mapping, including letterboxing
+  // while a panel open/close resize hasn't been flushed into the viewBox yet
+  const ctm = canvas.getScreenCTM();
+  if (!ctm){
+    const r = canvas.getBoundingClientRect();
+    return { x: app.vb.x + (cx-r.left)/r.width*app.vb.w, y: app.vb.y + (cy-r.top)/r.width*app.vb.w };
+  }
+  const v = new DOMPoint(cx, cy).matrixTransform(ctm.inverse()); // client → view coords
+  const m = VIEW.inverse();
+  return { x: m.a*v.x + m.c*v.y + m.e, y: m.b*v.x + m.d*v.y + m.f };
 }
 
 function termAbs(part, termId){
+  if (termId.startsWith('H:')) return PARTS.holePos(part).find(t=>t.id===termId);
   return PARTS.termPos(part).find(t=>t.id===termId);
 }
 
-/* nearest terminal to a canvas point — board pins sit close together, so
-   picking by distance beats trusting whichever overlapping hit-circle is on top */
-function nearestTerm(pt, maxDist, exclude){
+/* nearest connection point (terminal or board hole) to a world point — board
+   pins sit close together, so distance beats whichever hit-circle is on top */
+function nearestConn(pt, maxDist, exclude){
   let best = null, bd = maxDist;
   for (const p of app.parts){
-    for (const t of PARTS.termPos(p)){
+    for (const t of PARTS.connPoints(p)){
       if (exclude && exclude.part===p.id && exclude.term===t.id) continue;
       const d = Math.hypot(t.x-pt.x, t.y-pt.y);
-      if (d < bd){ bd = d; best = {part:p.id, term:t.id}; }
+      if (d < bd){ bd = d; best = {part:p.id, term:t.id, x:t.x, y:t.y, hole:!!t.hole}; }
     }
   }
   return best;
 }
+const nearestTerm = nearestConn; // back-compat alias
+
+/* wireless connectivity: any part terminal touching another terminal or
+   sitting in a board hole conducts — like legs pushed into a breadboard */
+const LINK_TOL = 9;
+function computeLinks(){
+  const links = [];
+  const pts = [];
+  for (const p of app.parts){
+    const base = PARTS.defs[p.type].boardBase;
+    for (const t of PARTS.connPoints(p)) pts.push({part:p.id, term:t.id, x:t.x, y:t.y, hole:!!t.hole, base});
+  }
+  for (let i=0;i<pts.length;i++){
+    const a = pts[i];
+    if (a.hole) continue;                    // pair each leg against holes/legs, once
+    for (let j=0;j<pts.length;j++){
+      if (i===j) continue;
+      const b = pts[j];
+      if (b.part===a.part) continue;
+      if (!b.hole && j<i) continue;          // leg↔leg counted once
+      if (Math.hypot(a.x-b.x, a.y-b.y) > LINK_TOL) continue;
+      links.push({a:{part:a.part, term:a.term}, b:{part:b.part, term:b.term},
+                  x:(a.x+b.x)/2, y:(a.y+b.y)/2, hole:b.hole});
+    }
+  }
+  app.links = links;
+}
+
+/* snap-dock: after dropping a part, pull it so its nearest leg sits exactly
+   on the closest hole/terminal — parts "click" together without wires */
+function dockPart(p){
+  if (PARTS.defs[p.type].boardBase) return;
+  let best = null, bd = 14;
+  for (const t of PARTS.termPos(p)){
+    for (const q of app.parts){
+      if (q.id===p.id) continue;
+      for (const c of PARTS.connPoints(q)){
+        const d = Math.hypot(c.x-t.x, c.y-t.y);
+        if (d < bd && d > 0.01){ bd = d; best = {dx:c.x-t.x, dy:c.y-t.y}; }
+      }
+    }
+  }
+  if (best){ p.x += best.dx; p.y += best.dy; }
+}
+
+/* full route of a wire = endpoint, joints..., endpoint (world coords) */
+function wireRoute(w){
+  const pa = app.parts.find(p=>p.id===w.a.part), pb = app.parts.find(p=>p.id===w.b.part);
+  if (!pa||!pb) return null;
+  const a = termAbs(pa, w.a.term), b = termAbs(pb, w.b.term);
+  if (!a||!b) return null;
+  return [{x:a.x,y:a.y}, ...(w.pts||[]), {x:b.x,y:b.y}];
+}
+function wirePath(route){
+  // smooth polyline: quadratic curves through joints; gentle sag when jointless
+  if (route.length===2){
+    const [a,b]=route;
+    const mx=(a.x+b.x)/2, my=(a.y+b.y)/2 + Math.min(40, Math.hypot(b.x-a.x,b.y-a.y)*0.15+8);
+    return `M${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`;
+  }
+  let d = `M${route[0].x} ${route[0].y}`;
+  for (let i=1;i<route.length-1;i++){
+    const m = {x:(route[i].x+route[i+1].x)/2, y:(route[i].y+route[i+1].y)/2};
+    d += ` Q ${route[i].x} ${route[i].y} ${i===route.length-2?route[i+1].x:m.x} ${i===route.length-2?route[i+1].y:m.y}`;
+  }
+  return d;
+}
 
 function renderAll(){
-  const deco=[], wiresS=[], partsS=[], termsS=[];
+  computeLinks();
+  const deco=[], wiresS=[], partsS=[], termsS=[], linkS=[], handleS=[];
   for (const p of app.parts){
     const d = PARTS.defs[p.type];
     const sel = app.sel?.kind==='part' && app.sel.id===p.id;
@@ -77,17 +171,31 @@ function renderAll(){
     }
   }
   for (const w of app.wires){
-    const pa = app.parts.find(p=>p.id===w.a.part), pb = app.parts.find(p=>p.id===w.b.part);
-    if (!pa||!pb) continue;
-    const a = termAbs(pa, w.a.term), b = termAbs(pb, w.b.term);
-    if (!a||!b) continue;
-    const mx=(a.x+b.x)/2, my=(a.y+b.y)/2 + Math.min(40, Math.hypot(b.x-a.x,b.y-a.y)*0.15+8);
+    const route = wireRoute(w);
+    if (!route) continue;
     const sel = app.sel?.kind==='wire' && app.sel.id===w.id;
+    const d = wirePath(route);
     wiresS.push(`<g class="wire${sel?' sel':''}" data-wire="${w.id}">
-      <path d="M${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}" class="whit"/>
-      <path d="M${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}" class="wvis" style="stroke:${sel?'#4da3ff':w.color}"/></g>`);
+      <path d="${d}" class="whit"/>
+      <path d="${d}" class="wvis" style="stroke:${sel?'#4da3ff':w.color}"/></g>`);
+    if (sel){
+      // endpoint handles + joint handles + ghost midpoints for inserting joints
+      handleS.push(`<circle class="wjoint wend" data-wire="${w.id}" data-kind="end" data-end="a" cx="${route[0].x}" cy="${route[0].y}" r="9"/>`);
+      handleS.push(`<circle class="wjoint wend" data-wire="${w.id}" data-kind="end" data-end="b" cx="${route[route.length-1].x}" cy="${route[route.length-1].y}" r="9"/>`);
+      (w.pts||[]).forEach((pt,i)=> handleS.push(
+        `<circle class="wjoint" data-wire="${w.id}" data-kind="joint" data-idx="${i}" cx="${pt.x}" cy="${pt.y}" r="8"/>`));
+      for (let i=0;i<route.length-1;i++){
+        const mx=(route[i].x+route[i+1].x)/2, my=(route[i].y+route[i+1].y)/2;
+        handleS.push(`<circle class="wjoint wghost" data-wire="${w.id}" data-kind="ghost" data-idx="${i}" cx="${mx}" cy="${my}" r="7"/>`);
+      }
+    }
   }
-  $('#scene').innerHTML = `<g>${deco.join('')}</g><g>${wiresS.join('')}</g><g>${partsS.join('')}</g><g>${termsS.join('')}</g><path id="rubber" class="rubber" d="" visibility="hidden"/>`;
+  for (const l of app.links)
+    linkS.push(`<circle class="linkdot${l.hole?' inhole':''}" cx="${l.x}" cy="${l.y}" r="${l.hole?5:7}"/>`);
+  $('#scene').innerHTML = `<g id="world" transform="${viewStr()}">
+    <g>${deco.join('')}</g><g>${wiresS.join('')}</g><g>${partsS.join('')}</g>
+    <g class="links">${linkS.join('')}</g><g>${termsS.join('')}</g><g>${handleS.join('')}</g>
+    <path id="rubber" class="rubber" d="" visibility="hidden"/></g>`;
   app._hashes = {};
 }
 
@@ -99,6 +207,7 @@ function updateDynamic(){
     const h = JSON.stringify([p.state.broken, p.state.on, p.state.pressed, p.state.powered,
       Math.round((p.state.brightness||0)*20), Math.round(p.state.rotAngle||0), p.state.beeping,
       p.state.chargingOut, p.state.charging, Math.round(p.props.charge||0), p.props.value, p.props.color, p.props.t, p.props.usb, p.props.vout,
+      p.props.solders ? p.props.solders.length : 0,
       d.board ? Math.round(((p.state.pins?.[d.builtinLed]?.duty)||0)*20) : 0]);
     if (app._hashes[p.id] !== h){
       app._hashes[p.id] = h;
@@ -156,20 +265,43 @@ canvas.addEventListener('pointerdown', ev=>{
       mid: svgPt((pts[0].x+pts[1].x)/2,(pts[0].y+pts[1].y)/2)};
     return;
   }
+  const wp = svgPt(ev.clientX, ev.clientY);
+  const jointEl = ev.target.closest('.wjoint');
   const termEl = ev.target.closest('.term');
   const partEl = ev.target.closest('.part');
   const wireEl = ev.target.closest('.wire');
-  if (termEl){
-    const from = nearestTerm(svgPt(ev.clientX, ev.clientY), 40) ||
-      {part:termEl.dataset.part, term:termEl.dataset.term};
-    gesture = {mode:'wire', from, sx:ev.clientX, sy:ev.clientY, moved:false};
-    app.pendingWire = {...from};
+  if (jointEl){
+    const w = app.wires.find(x=>x.id===jointEl.dataset.wire);
+    const kind = jointEl.dataset.kind;
+    if (kind==='ghost'){ // inserting a new joint mid-segment and dragging it
+      const idx = +jointEl.dataset.idx;
+      w.pts = w.pts||[];
+      w.pts.splice(idx, 0, {x:wp.x, y:wp.y});
+      gesture = {mode:'joint', wire:w, idx, sx:ev.clientX, sy:ev.clientY, moved:true};
+      renderAll();
+    } else if (kind==='joint'){
+      gesture = {mode:'joint', wire:w, idx:+jointEl.dataset.idx, sx:ev.clientX, sy:ev.clientY, moved:false};
+    } else { // endpoint: drag to re-plug elsewhere
+      gesture = {mode:'end', wire:w, end:jointEl.dataset.end, sx:ev.clientX, sy:ev.clientY, moved:false};
+    }
+  } else if (termEl){
+    const from = nearestConn(wp, 40) || {part:termEl.dataset.part, term:termEl.dataset.term};
+    gesture = {mode:'wire', from:{part:from.part, term:from.term}, sx:ev.clientX, sy:ev.clientY, moved:false};
+    app.pendingWire = {part:from.part, term:from.term};
     renderAll();
   } else if (partEl){
     const p = app.parts.find(x=>x.id===partEl.dataset.part);
-    gesture = {mode:'drag', part:p, ox:p.x, oy:p.y, sx:ev.clientX, sy:ev.clientY, moved:false};
+    const nearHole = PARTS.defs[p.type].boardBase && nearestConn(wp, 11);
+    if (nearHole && nearHole.hole && nearHole.part===p.id){
+      // start a wire straight from a breadboard/perfboard hole
+      gesture = {mode:'wire', from:{part:nearHole.part, term:nearHole.term}, sx:ev.clientX, sy:ev.clientY, moved:false};
+      app.pendingWire = {part:nearHole.part, term:nearHole.term};
+      renderAll();
+    } else {
+      gesture = {mode:'drag', part:p, ox:p.x, oy:p.y, w0:wp, sx:ev.clientX, sy:ev.clientY, moved:false};
+    }
   } else if (wireEl){
-    gesture = {mode:'tapwire', id:wireEl.dataset.wire};
+    gesture = {mode:'wiredrag', id:wireEl.dataset.wire, w0:wp, sx:ev.clientX, sy:ev.clientY, moved:false};
   } else {
     gesture = {mode:'pan', sx:ev.clientX, sy:ev.clientY, vx:app.vb.x, vy:app.vb.y, moved:false};
   }
@@ -193,9 +325,10 @@ canvas.addEventListener('pointermove', ev=>{
   }
   const dx = ev.clientX-(gesture.sx??0), dy = ev.clientY-(gesture.sy??0);
   if (Math.hypot(dx,dy) > 7) gesture.moved = true;
+  const wp = svgPt(ev.clientX, ev.clientY);
   if (gesture.mode==='drag' && gesture.moved){
-    gesture.part.x = snap(gesture.ox + dx*scale);
-    gesture.part.y = snap(gesture.oy + dy*scale);
+    gesture.part.x = snap(gesture.ox + wp.x - gesture.w0.x);
+    gesture.part.y = snap(gesture.oy + wp.y - gesture.w0.y);
     renderAll();
   } else if (gesture.mode==='pan' && gesture.moved){
     app.vb.x = gesture.vx - dx*scale; app.vb.y = gesture.vy - dy*scale;
@@ -203,9 +336,34 @@ canvas.addEventListener('pointermove', ev=>{
   } else if (gesture.mode==='wire'){
     const p = app.parts.find(x=>x.id===gesture.from.part);
     const a = termAbs(p, gesture.from.term);
-    const m = svgPt(ev.clientX, ev.clientY);
     const rb = $('#rubber');
-    if (rb){ rb.setAttribute('d', `M${a.x} ${a.y} L${m.x} ${m.y}`); rb.setAttribute('visibility','visible'); }
+    if (rb){ rb.setAttribute('d', `M${a.x} ${a.y} L${wp.x} ${wp.y}`); rb.setAttribute('visibility','visible'); }
+  } else if (gesture.mode==='joint' && gesture.moved){
+    gesture.wire.pts[gesture.idx] = {x:snap(wp.x), y:snap(wp.y)};
+    renderAll();
+  } else if (gesture.mode==='end' && gesture.moved){
+    const other = gesture.end==='a' ? gesture.wire.b : gesture.wire.a;
+    const po = app.parts.find(x=>x.id===other.part);
+    const o = po && termAbs(po, other.term);
+    const rb = $('#rubber');
+    if (rb && o){ rb.setAttribute('d', `M${o.x} ${o.y} L${wp.x} ${wp.y}`); rb.setAttribute('visibility','visible'); }
+  } else if (gesture.mode==='wiredrag' && gesture.moved && !gesture.started){
+    // dragging the wire body: grab it by inserting a joint at the press point
+    const w = app.wires.find(x=>x.id===gesture.id);
+    if (w){
+      const route = wireRoute(w) || [];
+      let idx = 0, bd = 1e9;
+      for (let i=0;i<route.length-1;i++){
+        const mx=(route[i].x+route[i+1].x)/2, my=(route[i].y+route[i+1].y)/2;
+        const d = Math.hypot(mx-gesture.w0.x, my-gesture.w0.y);
+        if (d < bd){ bd = d; idx = i; }
+      }
+      w.pts = w.pts||[];
+      w.pts.splice(idx, 0, {x:snap(wp.x), y:snap(wp.y)});
+      select({kind:'wire', id:w.id});
+      gesture = {mode:'joint', wire:w, idx, sx:gesture.sx, sy:gesture.sy, moved:true};
+      renderAll();
+    }
   }
 });
 
@@ -219,14 +377,34 @@ canvas.addEventListener('pointerup', ev=>{
     if (!moved){
       // sticky tap-to-tap mode: keep pendingWire, wait for next tap
       app.pendingWire = {...g.from, sticky:true};
-      toast('Now tap another ● terminal to finish the wire (tap empty space to cancel)', 'info', 'wire2');
+      toast('Now tap another ● point to finish the wire (tap empty space to cancel)', 'info', 'wire2');
     } else {
       const scale = app.vb.w / canvas.getBoundingClientRect().width;
-      const to = nearestTerm(svgPt(ev.clientX, ev.clientY), 40*Math.max(1,scale), g.from);
-      if (to) addWire(g.from, to);
+      const to = nearestConn(svgPt(ev.clientX, ev.clientY), 40*Math.max(1,scale), g.from);
+      if (to) addWire(g.from, {part:to.part, term:to.term});
       app.pendingWire = null;
     }
     renderAll(); return;
+  }
+  if (g.mode==='joint'){
+    if (!g.moved){ select({kind:'wire', id:g.wire.id}); renderAll(); }
+    save(); return;
+  }
+  if (g.mode==='end'){
+    if (g.moved){
+      const to = nearestConn(svgPt(ev.clientX, ev.clientY), 34);
+      const other = g.end==='a' ? g.wire.b : g.wire.a;
+      if (to && !(to.part===other.part && to.term===other.term)){
+        g.wire[g.end] = {part:to.part, term:to.term};
+        save();
+      }
+      renderAll();
+    }
+    return;
+  }
+  if (g.mode==='wiredrag'){
+    if (!g.moved){ select({kind:'wire', id:g.id}); renderAll(); }
+    return;
   }
 
   if (g.mode==='drag' && !g.moved){
@@ -238,10 +416,9 @@ canvas.addEventListener('pointerup', ev=>{
     select({kind:'part', id:p.id});
     renderAll(); return;
   }
-  if (g.mode==='drag'){ save(); return; }
-  if (g.mode==='tapwire'){
-    if (app.pendingWire?.sticky){ app.pendingWire=null; }
-    select({kind:'wire', id:g.id}); renderAll(); return;
+  if (g.mode==='drag'){
+    dockPart(g.part);   // click into touching terminals / board holes
+    renderAll(); save(); return;
   }
   if (g.mode==='pan' && !g.moved){
     // tap empty: complete sticky wire? cancel things
@@ -251,12 +428,14 @@ canvas.addEventListener('pointerup', ev=>{
 });
 canvas.addEventListener('pointercancel', ev=>{ activePtrs.delete(ev.pointerId); gesture=null; });
 
-// second tap completes sticky wire (handled via pointerdown on term when pendingWire.sticky)
+// second tap completes sticky wire — accepts terminals AND board holes
 canvas.addEventListener('pointerdown', ev=>{
-  if (ev.target.closest('.term') && app.pendingWire?.sticky){
-    const from = {part:app.pendingWire.part, term:app.pendingWire.term};
-    const to = nearestTerm(svgPt(ev.clientX, ev.clientY), 40, from);
-    if (to) addWire(from, to);
+  if (!app.pendingWire?.sticky) return;
+  const from = {part:app.pendingWire.part, term:app.pendingWire.term};
+  const near = ev.target.closest('.term') ? 40 : 16; // generous on dots, tight elsewhere
+  const to = nearestConn(svgPt(ev.clientX, ev.clientY), near, from);
+  if (to){
+    addWire(from, {part:to.part, term:to.term});
     app.pendingWire = null; gesture = null;
     ev.stopPropagation();
     renderAll();
@@ -280,9 +459,18 @@ function renderPanel(){
   el.classList.add('open');
 
   if (app.sel.kind==='wire'){
-    el.innerHTML = `<div class="prow"><b>Wire</b><span class="spacer"></span>
-      <button class="btn danger" id="pDelW">🗑 Delete wire</button></div>`;
-    $('#pDelW').onclick = ()=>{ app.wires = app.wires.filter(w=>w.id!==app.sel.id); select(null); renderAll(); save(); };
+    const w = app.wires.find(x=>x.id===app.sel.id);
+    if (!w){ el.classList.remove('open'); return; }
+    el.innerHTML = `<div class="prow"><b>Wire</b>
+      <span class="reads">drag the wire to bend it · ◌ adds a joint · drag ends to re-plug</span>
+      <span class="spacer"></span>
+      ${(w.pts&&w.pts.length)?'<button class="btn" id="pStr">✨ Straighten</button>':''}
+      <button class="btn danger" id="pDelW">🗑 Delete</button></div>
+      <div class="prow props"><span class="reads">Colour</span>
+      ${WIRE_COLORS.map(c=>`<button class="swatch${c===w.color?' on':''}" data-c="${c}" style="background:${c}"></button>`).join('')}</div>`;
+    $('#pDelW').onclick = ()=>{ app.wires = app.wires.filter(x=>x.id!==w.id); select(null); renderAll(); save(); };
+    if ($('#pStr')) $('#pStr').onclick = ()=>{ w.pts = []; renderAll(); renderPanel(); save(); };
+    el.querySelectorAll('.swatch').forEach(b=> b.onclick = ()=>{ w.color = b.dataset.c; renderAll(); renderPanel(); save(); });
     return;
   }
   const p = app.parts.find(x=>x.id===app.sel.id);
@@ -303,6 +491,7 @@ function renderPanel(){
   if (d.board) props = `<label class="chk"><input type="checkbox" id="pUsb" ${p.props.usb?'checked':''}> USB power</label>
     <button class="btn accent" id="pCode">&lt;/&gt; Code</button>`;
   if (p.type==='button') props += `<button class="btn" id="pHold">👇 HOLD</button>`;
+  if (p.type==='perfboard') props += `<button class="btn accent" id="pFlip">🔁 Flip &amp; solder</button>`;
 
   el.innerHTML = `<div class="prow">
       <b>${d.name}</b> ${readout}<span class="spacer"></span>
@@ -324,6 +513,7 @@ function renderPanel(){
   if ($('#pVout')) $('#pVout').onchange = e=>{ p.props.vout=+e.target.value; renderAll(); save(); };
   if ($('#pUsb')) $('#pUsb').onchange = e=>{ p.props.usb=e.target.checked; renderAll(); save(); };
   if ($('#pCode')) $('#pCode').onclick = ()=>openEditor(p.id);
+  if ($('#pFlip')) $('#pFlip').onclick = ()=>openSolder(p.id);
   if ($('#pHold')){
     const b = $('#pHold');
     b.onpointerdown = e=>{ e.preventDefault(); p.state.pressed=true; b.classList.add('active'); };
@@ -353,6 +543,132 @@ function showInfo(type){
 }
 $('#modalClose').onclick = ()=>$('#modal').classList.remove('open');
 $('#modal').onclick = e=>{ if(e.target.id==='modal') $('#modal').classList.remove('open'); };
+
+/* ============================ SOLDER VIEW (perfboard flipped to copper side) ============================ */
+let solderBoard = null, solderGesture = null;
+
+function openSolder(partId){
+  solderBoard = partId;
+  $('#solder').classList.add('open');
+  renderSolder();
+}
+$('#solderClose').onclick = ()=>{ $('#solder').classList.remove('open'); solderBoard=null; renderAll(); save(); };
+
+function solderLocalPads(bb){
+  const d = PARTS.defs[bb.type];
+  return d.holes.call(d, bb); // local coords
+}
+/* which pads have a component leg or wire through them */
+function padOccupants(bb){
+  const occ = {};
+  for (const l of app.links){
+    for (const e of [l.a, l.b]){
+      if (e.part===bb.id && e.term.startsWith('H:')){
+        const o = l.a.part===bb.id ? l.b : l.a;
+        const p = app.parts.find(x=>x.id===o.part);
+        occ[e.term] = p ? PARTS.defs[p.type].name : 'part';
+      }
+    }
+  }
+  for (const w of app.wires){
+    for (const e of [w.a, w.b])
+      if (e.part===bb.id && e.term.startsWith('H:')) occ[e.term] = occ[e.term] || 'wire';
+  }
+  return occ;
+}
+function renderSolder(){
+  const bb = app.parts.find(p=>p.id===solderBoard);
+  if (!bb) return;
+  const d = PARTS.defs[bb.type];
+  const W = d.w, H = d.h;
+  const mx = x => W - x; // horizontal mirror = looking at the back
+  const occ = padOccupants(bb);
+  const pads = solderLocalPads(bb);
+  const at = {}; pads.forEach(h=>at[h.id]=h);
+  let s = `<rect x="0" y="0" width="${W}" height="${H}" rx="6" fill="#9c7433" stroke="#6e4f1e"/>
+    <rect x="2" y="2" width="${W-4}" height="${H-4}" rx="5" fill="#ad8340"/>`;
+  for (const [i, sol] of (bb.props.solders||[]).entries()){
+    const a = at[sol[0]], b = at[sol[1]];
+    if (!a||!b) continue;
+    s += `<g class="strace" data-i="${i}">
+      <line x1="${mx(a.x)}" y1="${a.y}" x2="${mx(b.x)}" y2="${b.y}" stroke="transparent" stroke-width="16"/>
+      <line x1="${mx(a.x)}" y1="${a.y}" x2="${mx(b.x)}" y2="${b.y}" stroke="#c7cdd6" stroke-width="7" stroke-linecap="round"/>
+      <line x1="${mx(a.x)}" y1="${a.y}" x2="${mx(b.x)}" y2="${b.y}" stroke="#eef1f6" stroke-width="3" stroke-linecap="round"/></g>`;
+  }
+  for (const h of pads){
+    const has = occ[h.id];
+    s += `<g class="spad" data-pad="${h.id}">
+      <circle cx="${mx(h.x)}" cy="${h.y}" r="7.5" fill="url(#gCopper)" stroke="#7a4a1a"/>
+      <circle cx="${mx(h.x)}" cy="${h.y}" r="${has?4:2.6}" fill="${has?'#e8ebf2':'#3a2a10'}" stroke="${has?'#8a929d':'none'}"/>
+      </g>`;
+  }
+  // legend for occupied pads
+  for (const h of pads){
+    if (occ[h.id]) s += `<text x="${mx(h.x)}" y="${h.y-11}" font-size="6.5" fill="#ffe9b8" text-anchor="middle" pointer-events="none">${occ[h.id]}</text>`;
+  }
+  s += `<line id="srubber" x1="0" y1="0" x2="0" y2="0" stroke="#eef1f6" stroke-width="5" stroke-linecap="round" stroke-dasharray="8 6" visibility="hidden"/>`;
+  const svg = $('#solderSvg');
+  svg.setAttribute('viewBox', `-8 -8 ${W+16} ${H+16}`);
+  svg.innerHTML = `<defs>${PARTS.SVG_DEFS}</defs>${s}`;
+  $('#solderCount').textContent = `${(bb.props.solders||[]).length} solder trace${(bb.props.solders||[]).length===1?'':'s'}`;
+}
+function solderPt(ev){
+  const svg = $('#solderSvg');
+  const bb = app.parts.find(p=>p.id===solderBoard);
+  const d = PARTS.defs[bb.type];
+  const W = d.w+16, H = d.h+16;
+  const r = svg.getBoundingClientRect();
+  const s = Math.min(r.width/W, r.height/H);
+  const ox = (r.width - W*s)/2, oy = (r.height - H*s)/2;
+  const vx = (ev.clientX - r.left - ox)/s - 8, vy = (ev.clientY - r.top - oy)/s - 8;
+  return { x: d.w - vx, y: vy }; // un-mirror back to board coords
+}
+function nearestPad(pt, maxDist){
+  const bb = app.parts.find(p=>p.id===solderBoard);
+  let best=null, bd=maxDist;
+  for (const h of solderLocalPads(bb)){
+    const dd = Math.hypot(h.x-pt.x, h.y-pt.y);
+    if (dd<bd){ bd=dd; best=h; }
+  }
+  return best;
+}
+$('#solderSvg').addEventListener('pointerdown', ev=>{
+  ev.preventDefault();
+  $('#solderSvg').setPointerCapture(ev.pointerId);
+  const tr = ev.target.closest('.strace');
+  if (tr){ solderGesture = {mode:'deltrace', i:+tr.dataset.i, sx:ev.clientX, sy:ev.clientY}; return; }
+  const pad = nearestPad(solderPt(ev), 16);
+  if (pad) solderGesture = {mode:'trace', from:pad, sx:ev.clientX, sy:ev.clientY, moved:false};
+});
+$('#solderSvg').addEventListener('pointermove', ev=>{
+  if (!solderGesture || solderGesture.mode!=='trace') return;
+  if (Math.hypot(ev.clientX-solderGesture.sx, ev.clientY-solderGesture.sy) > 6) solderGesture.moved = true;
+  const bb = app.parts.find(p=>p.id===solderBoard);
+  const d = PARTS.defs[bb.type];
+  const pt = solderPt(ev);
+  const rb = $('#srubber');
+  if (rb){ rb.setAttribute('x1', d.w-solderGesture.from.x); rb.setAttribute('y1', solderGesture.from.y);
+    rb.setAttribute('x2', d.w-pt.x); rb.setAttribute('y2', pt.y); rb.setAttribute('visibility','visible'); }
+});
+$('#solderSvg').addEventListener('pointerup', ev=>{
+  const g = solderGesture; solderGesture = null;
+  if (!g) return;
+  const bb = app.parts.find(p=>p.id===solderBoard);
+  if (g.mode==='deltrace'){
+    bb.props.solders.splice(g.i, 1);
+    renderSolder(); save();
+    return;
+  }
+  if (g.mode==='trace' && g.moved){
+    const to = nearestPad(solderPt(ev), 16);
+    if (to && to.id!==g.from.id){
+      bb.props.solders = bb.props.solders||[];
+      const dup = bb.props.solders.some(s=>(s[0]===g.from.id&&s[1]===to.id)||(s[0]===to.id&&s[1]===g.from.id));
+      if (!dup){ bb.props.solders.push([g.from.id, to.id]); toast('🔥 Soldered!', 'ok', 'soldered'); }
+    }
+    renderSolder(); save();
+  }
+});
 
 /* ============================ TOASTS & WARNINGS ============================ */
 function toast(msg, level='info', key){
@@ -411,6 +727,43 @@ $('#edExamples').onchange = e=>{
   e.target.value = '';
 };
 $('#edClear').onclick = ()=>{ app.serials[editorPart]=''; $('#edSerial').textContent=''; };
+$('#edRef').onclick = ()=>{
+  $('#modalBody').innerHTML = `<h2>📖 Arduino-C reference</h2><div class="infotext">
+  <p>Every sketch needs two functions: <code>void setup() { }</code> runs <b>once</b> at power-up, <code>void loop() { }</code> repeats <b>forever</b>. Statements end with <code>;</code></p>
+  <h3>Pins</h3>
+  <table class="xp">
+  <tr><td>pinMode(pin, mode)</td><td>Declare a pin's job. Modes: <code>OUTPUT</code> (drive volts out), <code>INPUT</code> (just measure), <code>INPUT_PULLUP</code> (measure, with an internal resistor holding it HIGH — the standard way to read buttons wired to GND).</td></tr>
+  <tr><td>digitalWrite(pin, v)</td><td>Set an OUTPUT pin to <code>HIGH</code> (3.3 V / 5 V) or <code>LOW</code> (0 V).</td></tr>
+  <tr><td>digitalRead(pin)</td><td>Returns <code>HIGH</code> or <code>LOW</code> depending on the voltage currently on the pin.</td></tr>
+  <tr><td>analogWrite(pin, 0–255)</td><td>PWM: pulses the pin so its <i>average</i> output is a fraction of full power — dims LEDs, slows motors. Uno: only pins 3,5,6,9,10,11.</td></tr>
+  <tr><td>analogRead(pin)</td><td>Measures a voltage precisely: ESP32 returns 0–4095 (for 0–3.3 V), Uno 0–1023 (for 0–5 V).</td></tr>
+  </table>
+  <h3>Timing</h3>
+  <table class="xp">
+  <tr><td>delay(ms)</td><td>Pause the whole program for that many milliseconds (1000 ms = 1 s).</td></tr>
+  <tr><td>millis()</td><td>Milliseconds since the board booted — for timing things <i>without</i> freezing the program.</td></tr>
+  </table>
+  <h3>Serial monitor</h3>
+  <table class="xp">
+  <tr><td>Serial.begin(115200)</td><td>Open the link (once, in setup) so the board can talk to the monitor below the editor.</td></tr>
+  <tr><td>Serial.print(x) / Serial.println(x)</td><td>Write text or numbers to the monitor; println ends the line. Your debugging best friend.</td></tr>
+  </table>
+  <h3>Language bits</h3>
+  <table class="xp">
+  <tr><td>int x = 0;</td><td>Make a whole-number variable. Also <code>float</code> (decimals), <code>bool</code> (true/false). Variables declared outside functions keep their value between loop() runs.</td></tr>
+  <tr><td>if (a == b) { } else { }</td><td>Decide. Comparisons: <code>==</code> equal, <code>!=</code> not equal, <code>&lt; &gt; &lt;= &gt;=</code>. Combine with <code>&&</code> (and), <code>||</code> (or), <code>!</code> (not).</td></tr>
+  <tr><td>for (int i=0; i&lt;10; i++) { }</td><td>Repeat a block 10 times: start; keep-going condition; per-lap step. <code>while (cond) { }</code> repeats while true.</td></tr>
+  <tr><td>int twice(int n) { return n*2; }</td><td>Write your own functions and call them: <code>twice(21)</code>.</td></tr>
+  <tr><td>// note</td><td>Comment — ignored by the board, priceless for humans.</td></tr>
+  </table>
+  <h3>Helpers</h3>
+  <table class="xp">
+  <tr><td>map(x, a,b, c,d)</td><td>Rescale x from range a–b into range c–d, e.g. <code>map(raw, 0,4095, 0,255)</code> turns a knob reading into a PWM level.</td></tr>
+  <tr><td>constrain(x, lo, hi) · min · max · abs</td><td>Clamp and basic maths.</td></tr>
+  <tr><td>random(n) / random(a,b)</td><td>Random whole number (0…n-1, or a…b-1).</td></tr>
+  </table></div>`;
+  $('#modal').classList.add('open');
+};
 // tab key inserts spaces in the editor
 $('#edCode').addEventListener('keydown', e=>{
   if (e.key==='Tab'){ e.preventDefault();
@@ -499,8 +852,8 @@ function tick(now){
     }
   }
 
-  // 2. solve circuit
-  const res = Sim.solve(app.parts, app.wires, dt);
+  // 2. solve circuit (wires + wireless links: docked legs, breadboard strips, solder traces)
+  const res = Sim.solve(app.parts, app.wires, dt, app.links);
   for (const p of app.parts) p.state.reads = res.byPart[p.id];
 
   // 3. warnings
@@ -703,7 +1056,9 @@ function boot(){
   renderAll();
   applyVB();
   $('#mSound').textContent = app.settings.sound ? '🔊 Sound: on' : '🔇 Sound: off';
+  $('#btn3d').onclick = ()=> setView3d(!app.view3d);
   window.addEventListener('resize', applyVB);
+  if (window.ResizeObserver) new ResizeObserver(applyVB).observe($('#canvasWrap'));
   switchTab('build');
   if (!localStorage.getItem('cl_welcomed')){
     localStorage.setItem('cl_welcomed','1');
