@@ -36,22 +36,16 @@ function applyVB(){
   canvas.setAttribute('viewBox', `${app.vb.x} ${app.vb.y} ${app.vb.w} ${h}`);
 }
 
-/* ---- 3D workbench view: an invertible affine tilt applied to the whole scene,
-   so building/wiring stays fully interactive while tilted ---- */
-let VIEW = new DOMMatrix();
-function viewStr(){ return `matrix(${VIEW.a} ${VIEW.b} ${VIEW.c} ${VIEW.d} ${VIEW.e} ${VIEW.f})`; }
+/* ---- real 3D mode: swap the SVG bench for the WebGL scene (view3d.js) ---- */
 function setView3d(on){
   app.view3d = on;
-  if (on){
-    const r = canvas.getBoundingClientRect();
-    const cx = app.vb.x + app.vb.w/2, cy = app.vb.y + app.vb.w*(r.height/Math.max(1,r.width))/2;
-    VIEW = new DOMMatrix().translate(cx, cy).skewX(-16).scale(1, 0.62).translate(-cx, -cy);
-  } else VIEW = new DOMMatrix();
-  canvas.classList.toggle('tilted', on);
+  $('#gl').style.display = on ? 'block' : 'none';
+  canvas.style.display = on ? 'none' : 'block';
   const b = $('#btn3d'); if (b){ b.textContent = on ? '2D' : '3D'; b.classList.toggle('active', on); }
-  renderAll();
+  if (on) View3D.start();
+  else { View3D.stop(); applyVB(); renderAll(); }
 }
-function svgPt(cx, cy){ // client pixels → world coordinates (through viewBox AND tilt)
+function svgPt(cx, cy){ // client pixels → world coordinates
   // getScreenCTM reflects the REAL current mapping, including letterboxing
   // while a panel open/close resize hasn't been flushed into the viewBox yet
   const ctm = canvas.getScreenCTM();
@@ -59,9 +53,14 @@ function svgPt(cx, cy){ // client pixels → world coordinates (through viewBox 
     const r = canvas.getBoundingClientRect();
     return { x: app.vb.x + (cx-r.left)/r.width*app.vb.w, y: app.vb.y + (cy-r.top)/r.width*app.vb.w };
   }
-  const v = new DOMPoint(cx, cy).matrixTransform(ctm.inverse()); // client → view coords
-  const m = VIEW.inverse();
-  return { x: m.a*v.x + m.c*v.y + m.e, y: m.b*v.x + m.d*v.y + m.f };
+  const v = new DOMPoint(cx, cy).matrixTransform(ctm.inverse());
+  return { x: v.x, y: v.y };
+}
+/* screen pixels → world units at current zoom, so touch targets stay
+   finger-sized no matter how far out you're zoomed */
+function pxW(px){
+  const r = canvas.getBoundingClientRect();
+  return px * app.vb.w / Math.max(1, r.width);
 }
 
 function termAbs(part, termId){
@@ -114,7 +113,7 @@ function computeLinks(){
    on the closest hole/terminal — parts "click" together without wires */
 function dockPart(p){
   if (PARTS.defs[p.type].boardBase) return;
-  let best = null, bd = 14;
+  let best = null, bd = Math.max(14, Math.min(26, pxW(14)));
   for (const t of PARTS.termPos(p)){
     for (const q of app.parts){
       if (q.id===p.id) continue;
@@ -152,6 +151,11 @@ function wirePath(route){
 
 function renderAll(){
   computeLinks();
+  const hitR = Math.max(16, pxW(19));       // touch-friendly at any zoom
+  const dotR = Math.max(5.5, pxW(5));
+  const wHit = Math.max(16, pxW(15));
+  const wVis = Math.max(4, pxW(2.6));
+  const jR   = Math.max(8, pxW(11));
   const deco=[], wiresS=[], partsS=[], termsS=[], linkS=[], handleS=[];
   for (const p of app.parts){
     const d = PARTS.defs[p.type];
@@ -166,8 +170,8 @@ function renderAll(){
       const src = app.pendingWire && app.pendingWire.part===p.id && app.pendingWire.term===t.id;
       const cls = /\+|3V3|5V|VIN/.test(t.id)?'tpos':/-|GND/.test(t.id)?'tneg':'tsig';
       termsS.push(`<g class="term" data-part="${p.id}" data-term="${t.id}">
-        <circle cx="${t.x}" cy="${t.y}" r="16" fill="transparent"/>
-        <circle class="tdot ${cls}${hot?' hot':''}${src?' src':''}" cx="${t.x}" cy="${t.y}" r="${src?8:5.5}"/></g>`);
+        <circle cx="${t.x}" cy="${t.y}" r="${hitR}" fill="transparent"/>
+        <circle class="tdot ${cls}${hot?' hot':''}${src?' src':''}" cx="${t.x}" cy="${t.y}" r="${src?dotR*1.5:dotR}"/></g>`);
     }
   }
   for (const w of app.wires){
@@ -176,23 +180,23 @@ function renderAll(){
     const sel = app.sel?.kind==='wire' && app.sel.id===w.id;
     const d = wirePath(route);
     wiresS.push(`<g class="wire${sel?' sel':''}" data-wire="${w.id}">
-      <path d="${d}" class="whit"/>
-      <path d="${d}" class="wvis" style="stroke:${sel?'#4da3ff':w.color}"/></g>`);
+      <path d="${d}" class="whit" style="stroke-width:${wHit}"/>
+      <path d="${d}" class="wvis" style="stroke:${sel?'#4da3ff':w.color};stroke-width:${wVis}"/></g>`);
     if (sel){
       // endpoint handles + joint handles + ghost midpoints for inserting joints
-      handleS.push(`<circle class="wjoint wend" data-wire="${w.id}" data-kind="end" data-end="a" cx="${route[0].x}" cy="${route[0].y}" r="9"/>`);
-      handleS.push(`<circle class="wjoint wend" data-wire="${w.id}" data-kind="end" data-end="b" cx="${route[route.length-1].x}" cy="${route[route.length-1].y}" r="9"/>`);
+      handleS.push(`<circle class="wjoint wend" data-wire="${w.id}" data-kind="end" data-end="a" cx="${route[0].x}" cy="${route[0].y}" r="${jR*1.1}"/>`);
+      handleS.push(`<circle class="wjoint wend" data-wire="${w.id}" data-kind="end" data-end="b" cx="${route[route.length-1].x}" cy="${route[route.length-1].y}" r="${jR*1.1}"/>`);
       (w.pts||[]).forEach((pt,i)=> handleS.push(
-        `<circle class="wjoint" data-wire="${w.id}" data-kind="joint" data-idx="${i}" cx="${pt.x}" cy="${pt.y}" r="8"/>`));
+        `<circle class="wjoint" data-wire="${w.id}" data-kind="joint" data-idx="${i}" cx="${pt.x}" cy="${pt.y}" r="${jR}"/>`));
       for (let i=0;i<route.length-1;i++){
         const mx=(route[i].x+route[i+1].x)/2, my=(route[i].y+route[i+1].y)/2;
-        handleS.push(`<circle class="wjoint wghost" data-wire="${w.id}" data-kind="ghost" data-idx="${i}" cx="${mx}" cy="${my}" r="7"/>`);
+        handleS.push(`<circle class="wjoint wghost" data-wire="${w.id}" data-kind="ghost" data-idx="${i}" cx="${mx}" cy="${my}" r="${jR*0.85}"/>`);
       }
     }
   }
   for (const l of app.links)
-    linkS.push(`<circle class="linkdot${l.hole?' inhole':''}" cx="${l.x}" cy="${l.y}" r="${l.hole?5:7}"/>`);
-  $('#scene').innerHTML = `<g id="world" transform="${viewStr()}">
+    linkS.push(`<circle class="linkdot${l.hole?' inhole':''}" cx="${l.x}" cy="${l.y}" r="${(l.hole?5:7)*Math.max(1,pxW(1))}"/>`);
+  $('#scene').innerHTML = `<g id="world">
     <g>${deco.join('')}</g><g>${wiresS.join('')}</g><g>${partsS.join('')}</g>
     <g class="links">${linkS.join('')}</g><g>${termsS.join('')}</g><g>${handleS.join('')}</g>
     <path id="rubber" class="rubber" d="" visibility="hidden"/></g>`;
@@ -285,13 +289,13 @@ canvas.addEventListener('pointerdown', ev=>{
       gesture = {mode:'end', wire:w, end:jointEl.dataset.end, sx:ev.clientX, sy:ev.clientY, moved:false};
     }
   } else if (termEl){
-    const from = nearestConn(wp, 40) || {part:termEl.dataset.part, term:termEl.dataset.term};
+    const from = nearestConn(wp, Math.max(40, pxW(24))) || {part:termEl.dataset.part, term:termEl.dataset.term};
     gesture = {mode:'wire', from:{part:from.part, term:from.term}, sx:ev.clientX, sy:ev.clientY, moved:false};
     app.pendingWire = {part:from.part, term:from.term};
     renderAll();
   } else if (partEl){
     const p = app.parts.find(x=>x.id===partEl.dataset.part);
-    const nearHole = PARTS.defs[p.type].boardBase && nearestConn(wp, 11);
+    const nearHole = PARTS.defs[p.type].boardBase && nearestConn(wp, Math.max(11, pxW(13)));
     if (nearHole && nearHole.hole && nearHole.part===p.id){
       // start a wire straight from a breadboard/perfboard hole
       gesture = {mode:'wire', from:{part:nearHole.part, term:nearHole.term}, sx:ev.clientX, sy:ev.clientY, moved:false};
@@ -370,7 +374,8 @@ canvas.addEventListener('pointermove', ev=>{
 canvas.addEventListener('pointerup', ev=>{
   activePtrs.delete(ev.pointerId);
   const g = gesture; gesture = null;
-  if (!g || g.mode==='pinch') return;
+  if (!g) return;
+  if (g.mode==='pinch'){ queueZoomRerender(); return; }
 
   if (g.mode==='wire'){
     const moved = Math.hypot(ev.clientX-g.sx, ev.clientY-g.sy) > 12;
@@ -379,8 +384,7 @@ canvas.addEventListener('pointerup', ev=>{
       app.pendingWire = {...g.from, sticky:true};
       toast('Now tap another ● point to finish the wire (tap empty space to cancel)', 'info', 'wire2');
     } else {
-      const scale = app.vb.w / canvas.getBoundingClientRect().width;
-      const to = nearestConn(svgPt(ev.clientX, ev.clientY), 40*Math.max(1,scale), g.from);
+      const to = nearestConn(svgPt(ev.clientX, ev.clientY), Math.max(40, pxW(28)), g.from);
       if (to) addWire(g.from, {part:to.part, term:to.term});
       app.pendingWire = null;
     }
@@ -392,7 +396,7 @@ canvas.addEventListener('pointerup', ev=>{
   }
   if (g.mode==='end'){
     if (g.moved){
-      const to = nearestConn(svgPt(ev.clientX, ev.clientY), 34);
+      const to = nearestConn(svgPt(ev.clientX, ev.clientY), Math.max(34, pxW(24)));
       const other = g.end==='a' ? g.wire.b : g.wire.a;
       if (to && !(to.part===other.part && to.term===other.term)){
         g.wire[g.end] = {part:to.part, term:to.term};
@@ -432,7 +436,7 @@ canvas.addEventListener('pointercancel', ev=>{ activePtrs.delete(ev.pointerId); 
 canvas.addEventListener('pointerdown', ev=>{
   if (!app.pendingWire?.sticky) return;
   const from = {part:app.pendingWire.part, term:app.pendingWire.term};
-  const near = ev.target.closest('.term') ? 40 : 16; // generous on dots, tight elsewhere
+  const near = ev.target.closest('.term') ? Math.max(40, pxW(26)) : Math.max(16, pxW(14)); // generous on dots, tighter elsewhere
   const to = nearestConn(svgPt(ev.clientX, ev.clientY), near, from);
   if (to){
     addWire(from, {part:to.part, term:to.term});
@@ -442,6 +446,11 @@ canvas.addEventListener('pointerdown', ev=>{
   }
 }, true);
 
+let zoomRerender = null;
+function queueZoomRerender(){
+  clearTimeout(zoomRerender);
+  zoomRerender = setTimeout(renderAll, 160); // refresh screen-sized touch targets
+}
 canvas.addEventListener('wheel', ev=>{
   ev.preventDefault();
   const before = svgPt(ev.clientX, ev.clientY);
@@ -450,6 +459,7 @@ canvas.addEventListener('wheel', ev=>{
   const after = svgPt(ev.clientX, ev.clientY);
   app.vb.x += before.x-after.x; app.vb.y += before.y-after.y;
   applyVB();
+  queueZoomRerender();
 }, {passive:false});
 
 /* ============================ SELECTION PANEL ============================ */
@@ -863,7 +873,8 @@ function tick(now){
   for (const w of res.warnings) toast(w.msg, w.level, w.part.id+w.msg.slice(0,20));
 
   // 4. visuals
-  updateDynamic();
+  if (app.view3d) View3D.frame(dt);
+  else updateDynamic();
   refreshPanelReads();
 
   // 5. level checking
@@ -958,7 +969,7 @@ function switchTab(tab){
   ['build','learn','guide'].forEach(v=> $('#view-'+v).style.display = v===tab?'':'none');
   if (tab==='learn'){ renderLearn(); }
   if (tab==='guide'){ renderGuide(); }
-  if (tab==='build'){ applyVB(); }
+  if (tab==='build'){ applyVB(); if (app.view3d) View3D.resize(); }
 }
 document.querySelectorAll('.tab').forEach(b=> b.onclick = ()=>switchTab(b.dataset.tab));
 
@@ -1058,7 +1069,7 @@ function boot(){
   $('#mSound').textContent = app.settings.sound ? '🔊 Sound: on' : '🔇 Sound: off';
   $('#btn3d').onclick = ()=> setView3d(!app.view3d);
   window.addEventListener('resize', applyVB);
-  if (window.ResizeObserver) new ResizeObserver(applyVB).observe($('#canvasWrap'));
+  if (window.ResizeObserver) new ResizeObserver(()=>{ applyVB(); if (app.view3d) View3D.resize(); }).observe($('#canvasWrap'));
   switchTab('build');
   if (!localStorage.getItem('cl_welcomed')){
     localStorage.setItem('cl_welcomed','1');
