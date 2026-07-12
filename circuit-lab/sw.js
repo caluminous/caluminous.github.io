@@ -1,5 +1,5 @@
 /* Circuit Lab service worker — full offline support */
-const CACHE = 'circuit-lab-v3';
+const CACHE = 'circuit-lab-v4';
 const ASSETS = ['./','./index.html','./parts.js','./sim.js','./code.js','./learn.js','./app.js','./manifest.webmanifest','./icon.svg','./view3d.js','./vendor/three.min.js'];
 
 self.addEventListener('install', e => {
