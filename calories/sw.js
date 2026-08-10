@@ -2,7 +2,7 @@
    Strategy: precache the shell, then serve from cache while refreshing in the
    background, so the app opens instantly offline but still picks up updates. */
 
-const CACHE = 'fuel-v1';
+const CACHE = 'fuel-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -10,6 +10,7 @@ const ASSETS = [
   './data.js',
   './calc.js',
   './store.js',
+  './notify.js',
   './ui.js',
   './app.js',
   './manifest.webmanifest',
@@ -30,6 +31,20 @@ self.addEventListener('activate', e => {
     caches.keys()
       .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
+  );
+});
+
+/* Tapping a reminder focuses the app if it is already open, rather than
+   stacking up another copy of it. */
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      for (const client of list) {
+        if (client.url.includes('/calories') && 'focus' in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow('./');
+    })
   );
 });
 

@@ -3,8 +3,27 @@
   'use strict';
 
   const KEY = 'fuel-tracker-v1';
-  const MEALS = ['breakfast', 'lunch', 'dinner', 'snacks'];
-  const MEAL_LABEL = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snacks: 'Snacks' };
+
+  /* Meals are user-defined: these are only the starting set. Food entries store
+     the meal's id, so renaming a meal never touches already-logged food. */
+  const DEFAULT_MEALS = [
+    { id: 'breakfast', name: 'Breakfast' },
+    { id: 'lunch',     name: 'Lunch' },
+    { id: 'dinner',    name: 'Dinner' },
+    { id: 'snacks',    name: 'Snacks' }
+  ];
+
+  /* `mealId` ties a reminder to a meal, so it stays quiet once that meal is
+     already in the diary. It points at a default meal that the user may later
+     rename or delete — consumers must tolerate it going missing. */
+  const DEFAULT_REMINDERS = [
+    { id: 'r-weigh',  label: 'Morning weigh-in',   time: '07:30', enabled: false },
+    { id: 'r-bfast',  label: 'Log your breakfast', time: '09:00', enabled: false, mealId: 'breakfast' },
+    { id: 'r-lunch',  label: 'Log your lunch',     time: '13:30', enabled: false, mealId: 'lunch' },
+    { id: 'r-water',  label: 'Drink some water',   time: '15:30', enabled: false },
+    { id: 'r-dinner', label: 'Log your dinner',    time: '19:30', enabled: false, mealId: 'dinner' },
+    { id: 'r-check',  label: 'Check your day',     time: '21:00', enabled: false }
+  ];
 
   /* ---------------- utilities ---------------- */
 
@@ -78,7 +97,10 @@
         addExerciseCalories: true,
         units: { weight: 'kg', height: 'cm' },
         theme: 'dark',
-        onboarded: false
+        onboarded: false,
+        meals: DEFAULT_MEALS.map(m => Object.assign({}, m)),
+        reminders: DEFAULT_REMINDERS.map(r => Object.assign({}, r)),
+        notificationsOn: false
       },
       days: {},
       weights: [],
@@ -118,6 +140,19 @@
     profile.units = Object.assign({}, base.profile.units, savedProfile.units || {});
 
     const merged = Object.assign({}, base, saved, { profile });
+
+    /* Meals and reminders arrived after the first release; rebuild them from the
+       defaults for anyone whose save predates them. */
+    if (!Array.isArray(profile.meals) || !profile.meals.length) {
+      profile.meals = DEFAULT_MEALS.map(m => Object.assign({}, m));
+    }
+    profile.meals = profile.meals
+      .filter(m => m && m.id)
+      .map(m => ({ id: String(m.id), name: String(m.name || 'Meal') }));
+
+    if (!Array.isArray(profile.reminders)) {
+      profile.reminders = DEFAULT_REMINDERS.map(r => Object.assign({}, r));
+    }
 
     if (!merged.days || typeof merged.days !== 'object' || Array.isArray(merged.days)) {
       merged.days = {};
@@ -170,6 +205,57 @@
     if (!d) return false;
     return (d.food && d.food.length > 0) || (d.cardio && d.cardio.length > 0) ||
            (d.strength && d.strength.length > 0) || d.waterMl > 0 || d.steps > 0;
+  }
+
+  /* ---------------- meals ---------------- */
+
+  const meals = () => state.profile.meals;
+
+  function mealName(id) {
+    const m = meals().find(x => x.id === id);
+    return m ? m.name : 'Other';
+  }
+
+  function addMeal(name) {
+    const meal = { id: 'm-' + uid(), name: name.trim() || 'New meal' };
+    state.profile.meals.push(meal);
+    save();
+    return meal;
+  }
+
+  function renameMeal(id, name) {
+    const m = meals().find(x => x.id === id);
+    if (m) { m.name = name.trim() || m.name; save(); }
+  }
+
+  /* Deleting a meal moves anything already logged to it into `moveToId`, so no
+     food silently disappears from a day's totals. */
+  function deleteMeal(id, moveToId) {
+    if (meals().length <= 1) return false;
+    const target = moveToId || meals().find(m => m.id !== id).id;
+    for (const dateStr of Object.keys(state.days)) {
+      const d = state.days[dateStr];
+      if (!d.food) continue;
+      d.food.forEach(e => { if (e.meal === id) e.meal = target; });
+    }
+    state.profile.meals = meals().filter(m => m.id !== id);
+    save();
+    return true;
+  }
+
+  function moveMeal(id, delta) {
+    const list = meals();
+    const i = list.findIndex(m => m.id === id);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    list.splice(j, 0, list.splice(i, 1)[0]);
+    save();
+  }
+
+  /* Entries whose meal was removed by an older build still need somewhere to go. */
+  function orphanEntries(dateStr) {
+    const ids = meals().map(m => m.id);
+    return day(dateStr).food.filter(e => ids.indexOf(e.meal) < 0);
   }
 
   /* ---------------- food resolution ---------------- */
@@ -328,6 +414,27 @@
     return n;
   }
 
+  /* Copy every food entry from one day onto another — for repeated meals.
+     Entries are cloned with new ids so editing one does not change the other. */
+  function copyFood(fromDate, toDate, mealId) {
+    const src = day(fromDate).food.filter(e => !mealId || e.meal === mealId);
+    if (!src.length) return 0;
+    const dest = day(toDate);
+    src.forEach(e => {
+      dest.food.push(Object.assign({}, e, { id: uid(), t: Date.now() }));
+    });
+    save();
+    return src.length;
+  }
+
+  /* The most recent earlier day that has any food logged, for "copy previous". */
+  function lastFoodDay(beforeDate) {
+    const dates = Object.keys(state.days)
+      .filter(d => d < beforeDate && state.days[d].food && state.days[d].food.length)
+      .sort();
+    return dates.length ? dates[dates.length - 1] : null;
+  }
+
   /* ---------------- export / import ---------------- */
 
   function exportJSON() {
@@ -343,7 +450,9 @@
   }
 
   G.Store = {
-    KEY, MEALS, MEAL_LABEL,
+    KEY, DEFAULT_MEALS, DEFAULT_REMINDERS,
+    meals, mealName, addMeal, renameMeal, deleteMeal, moveMeal, orphanEntries,
+    copyFood, lastFoodDay,
     load, save, get, replace, reset, defaultState,
     day, dayHasData, summary, foodTotals, mealTotals, burnedTotal, streak,
     resolveFood, recipeAsFood, allFoods, searchFoods, noteRecent,
