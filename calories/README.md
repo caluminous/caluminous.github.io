@@ -24,8 +24,17 @@ remainder.
 
 **Food.** 133 built-in foods with per-100g macros and sensible serving sizes, plus
 your own custom foods and multi-ingredient recipes. Log by serving or by grams,
-with a live macro preview. Quick-add for when you only know the calories. Recent
-and saved lists for fast repeat logging.
+with a live macro preview. Search that finds nothing offers to create the food
+there and then, or to log it as a name and a number. Recent and saved lists, and
+a one-tap copy of an earlier day's food.
+
+**Your own meals.** The four starting meals are only a starting point — rename,
+reorder, add or delete them in Settings → Name my meals. Deleting one moves its
+food elsewhere rather than losing the calories.
+
+**Reminders.** Optional nudges to log meals, drink water and weigh in, each with
+its own time. A reminder stays quiet if you have already done the thing. See the
+honesty note below on what the web can actually deliver.
 
 **Training.** Cardio and activity logged against MET values, so calories burned come
 from your actual bodyweight and the duration — editable if your watch disagrees.
@@ -37,6 +46,21 @@ least-squares trend in kg/week, and a projected date for hitting your goal weigh
 
 **Also.** Water, steps, daily notes, logging streak, weekly averages and adherence,
 macro split, and 7- and 30-day charts.
+
+## What reminders can and cannot do
+
+A web app has no way to hand a list of future alarms to the phone's OS the way a
+native app can, and there is no push server behind this one. So reminders are
+checked on a timer while the app is running, and again the moment you reopen it.
+
+- **Android, installed to the home screen** — the app generally stays alive in the
+  background, so reminders arrive close to their time.
+- **iPhone** — needs iOS 16.4+ and the app added to the home screen. If you swipe
+  it away it sleeps, and nothing fires until you open it again.
+- **Either way** — anything missed is shown as a catch-up on next open, and a
+  reminder more than three hours stale is dropped rather than shown late.
+
+The Reminders screen says all of this in the app too.
 
 ## Your data
 
@@ -52,7 +76,8 @@ is no account. That also means clearing site data wipes it, so use
 | `style.css` | All styling; dark and light themes via `[data-theme]` |
 | `data.js` | Food, activity (MET) and lift databases |
 | `calc.js` | BMR, TDEE, macro, MET, e1RM, BMI and trend maths — pure functions |
-| `store.js` | State, `localStorage` persistence, migrations, derived totals |
+| `store.js` | State, `localStorage` persistence, migrations, meals, derived totals |
+| `notify.js` | Reminder scheduling and notification delivery |
 | `ui.js` | Sheets, rings, bars, SVG charts, toasts, form controls |
 | `app.js` | Views, routing and interaction |
 | `sw.js` | Service worker — precaches the shell for offline use |

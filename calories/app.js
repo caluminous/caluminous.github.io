@@ -8,7 +8,8 @@
 
   let view = 'today';
   let date = U.today();
-  let app, nav;
+  let weightRange = '90';
+  let app, nav, fab;
 
   const kcal = n => Math.round(n).toLocaleString('en-GB');
 
@@ -111,11 +112,11 @@
     /* meals */
     html += '<section class="card">' +
       '<h2 class="card-title">Meals <button class="link-btn" data-goto="food">Open diary</button></h2>';
-    for (const m of S.MEALS) {
-      const t = S.mealTotals(date, m);
-      const n = d.food.filter(e => e.meal === m).length;
-      html += '<button class="meal-row" data-meal="' + m + '">' +
-        '<span class="meal-name">' + S.MEAL_LABEL[m] + '</span>' +
+    for (const meal of S.meals()) {
+      const t = S.mealTotals(date, meal.id);
+      const n = d.food.filter(e => e.meal === meal.id).length;
+      html += '<button class="meal-row" data-meal="' + esc(meal.id) + '">' +
+        '<span class="meal-name">' + esc(meal.name) + '</span>' +
         '<span class="meal-sub">' + (n ? n + ' item' + (n > 1 ? 's' : '') : 'Nothing yet') + '</span>' +
         '<span class="meal-kcal">' + kcal(t.kcal) + '</span>' +
         '<span class="meal-add">+</span>' +
@@ -213,37 +214,58 @@
         statCell('Left', kcal(s.remaining), 'kcal') +
       '</div></section>';
 
-    for (const m of S.MEALS) {
-      const entries = d.food.filter(e => e.meal === m);
-      const t = S.mealTotals(date, m);
+    const entryRow = e =>
+      '<li class="entry">' +
+        '<div class="entry-main" data-entry="' + e.id + '">' +
+          '<div class="entry-name">' + esc(e.name) + '</div>' +
+          '<div class="entry-sub">' + esc(e.portion) + ' &middot; ' +
+            Math.round(e.p) + 'P ' + Math.round(e.c) + 'C ' + Math.round(e.f) + 'F</div>' +
+        '</div>' +
+        '<div class="entry-kcal">' + kcal(e.kcal) + '</div>' +
+        '<button class="x" data-del="' + e.id + '" aria-label="Remove ' + esc(e.name) + '">&times;</button>' +
+      '</li>';
+
+    const sections = S.meals().map(m => ({ id: m.id, name: m.name }));
+    const orphans = S.orphanEntries(date);
+    if (orphans.length) sections.push({ id: null, name: 'Other' });
+
+    for (const meal of sections) {
+      const entries = meal.id ? d.food.filter(e => e.meal === meal.id) : orphans;
+      const total = entries.reduce((sum, e) => sum + e.kcal, 0);
       html += '<section class="card">' +
-        '<h2 class="card-title">' + S.MEAL_LABEL[m] +
-          '<span class="card-note">' + kcal(t.kcal) + ' kcal</span></h2>';
+        '<h2 class="card-title">' + esc(meal.name) +
+          '<span class="card-note">' + kcal(total) + ' kcal</span></h2>';
       if (!entries.length) {
         html += '<p class="muted small" style="margin:2px 0 12px">Nothing logged.</p>';
       } else {
-        html += '<ul class="entries">' + entries.map(e =>
-          '<li class="entry" data-entry="' + e.id + '">' +
-            '<div class="entry-main">' +
-              '<div class="entry-name">' + esc(e.name) + '</div>' +
-              '<div class="entry-sub">' + esc(e.portion) + ' &middot; ' +
-                Math.round(e.p) + 'P ' + Math.round(e.c) + 'C ' + Math.round(e.f) + 'F</div>' +
-            '</div>' +
-            '<div class="entry-kcal">' + kcal(e.kcal) + '</div>' +
-          '</li>'
-        ).join('') + '</ul>';
+        html += '<ul class="entries">' + entries.map(entryRow).join('') + '</ul>';
       }
-      html += '<button class="btn ghost wide" data-add="' + m + '">+ Add food</button>' +
-      '</section>';
+      if (meal.id) {
+        html += '<button class="btn ghost wide" data-add="' + esc(meal.id) + '">+ Add food</button>';
+      }
+      html += '</section>';
     }
 
+    /* Fast ways in, rather than hiding these behind the settings screen. */
+    const prev = S.lastFoodDay(date);
     html += '<section class="card">' +
-      '<h2 class="card-title">Shortcuts</h2>' +
-      '<div class="row gap wrap">' +
-        '<button class="btn ghost flex1" data-quickadd>Quick add kcal</button>' +
-        '<button class="btn ghost flex1" data-newfood>New food</button>' +
-        '<button class="btn ghost flex1" data-newrecipe>New recipe</button>' +
-      '</div></section>';
+      '<h2 class="card-title">Quick actions</h2>' +
+      '<button class="btn ghost wide" data-quickadd>' +
+        '<b>Just calories</b> — type a name and a number</button>' +
+      '<button class="btn ghost wide" data-newfood>Create a food from a label</button>' +
+      '<button class="btn ghost wide" data-newrecipe>Build a meal from ingredients</button>' +
+      (prev
+        ? '<button class="btn ghost wide" data-copy="' + prev + '">Copy food from ' +
+          esc(U.friendlyDate(prev)) + '</button>'
+        : '') +
+    '</section>';
+
+    html += '<section class="card">' +
+      '<h2 class="card-title">My foods &amp; meals' +
+        '<span class="card-note">' + (S.get().customFoods.length + S.get().recipes.length) + ' saved</span></h2>' +
+      '<p class="muted small" style="margin:0 0 12px">Anything you create here shows up in search whenever you log food.</p>' +
+      '<button class="btn ghost wide" data-manage>Manage my foods &amp; meals</button>' +
+    '</section>';
 
     html += '</div>';
     return html;
@@ -251,16 +273,44 @@
 
   function bindFood() {
     $$('[data-add]', app).forEach(b => b.onclick = () => openFoodPicker(b.dataset.add));
-    $$('[data-entry]', app).forEach(li => li.onclick = () => editEntry(li.dataset.entry));
+    $$('[data-entry]', app).forEach(el => el.onclick = () => editEntry(el.dataset.entry));
+    $$('[data-del]', app).forEach(b => b.onclick = e => {
+      e.stopPropagation();
+      const day = S.day(date);
+      const entry = day.food.find(x => x.id === b.dataset.del);
+      day.food = day.food.filter(x => x.id !== b.dataset.del);
+      S.save(); render();
+      if (entry) toast('Removed ' + entry.name);
+    });
     $('[data-quickadd]', app).onclick = quickAdd;
     $('[data-newfood]', app).onclick = () => editCustomFood(null);
     $('[data-newrecipe]', app).onclick = () => editRecipe(null);
+    $('[data-manage]', app).onclick = manageFoods;
+    const copy = $('[data-copy]', app);
+    if (copy) copy.onclick = () => {
+      const from = copy.dataset.copy;
+      confirmSheet('Copy food?',
+        'Everything you ate on ' + U.friendlyDate(from) + ' will be added to ' + U.friendlyDate(date) + '.',
+        () => {
+          const n = S.copyFood(from, date);
+          render();
+          toast('Copied ' + n + ' item' + (n === 1 ? '' : 's'));
+        }, 'Copy');
+    };
+  }
+
+  /* Where a quick-add lands when the user has not picked a meal. */
+  function defaultMealId() {
+    const list = S.meals();
+    const hour = new Date().getHours();
+    const guess = hour < 11 ? 0 : hour < 15 ? 1 : hour < 21 ? 2 : (list.length > 3 ? 3 : list.length - 1);
+    return (list[Math.min(guess, list.length - 1)] || list[0]).id;
   }
 
   /* ---- food picker ---- */
 
   function openFoodPicker(meal) {
-    sheet('Add to ' + S.MEAL_LABEL[meal], (body, close) => {
+    sheet('Add to ' + S.mealName(meal), (body, close) => {
       body.innerHTML =
         '<input type="search" id="q" class="search" placeholder="Search foods…" autocomplete="off">' +
         segmented('tab', [
@@ -292,10 +342,22 @@
 
       function draw(items, tab) {
         if (!items.length) {
+          const term = q.value.trim();
           results.innerHTML = emptyState('&#127859;',
             tab === 'fav' ? 'No saved foods yet' : tab === 'recent' ? 'Nothing logged yet' :
-            tab === 'mine' ? 'No foods or recipes of your own' : 'No matches',
-            tab === 'all' ? 'Try a shorter word, or create your own food.' : '');
+            tab === 'mine' ? 'No foods or meals of your own' : 'No matches for “' + esc(term) + '”',
+            'Not in the list? Add it yourself — it takes a few seconds and it is there for good.') +
+            (term
+              ? '<button class="btn primary wide" data-mk="food">Create “' + esc(term) + '”</button>' +
+                '<button class="btn ghost wide" data-mk="quick">Log “' + esc(term) + '” with just calories</button>'
+              : '<button class="btn ghost wide" data-mk="food">Create a food</button>');
+
+          const mk = $$('[data-mk]', results);
+          mk.forEach(b => b.onclick = () => {
+            close();
+            if (b.dataset.mk === 'food') editCustomFood(null, term, meal);
+            else quickAdd(term, meal);
+          });
           return;
         }
         results.innerHTML = items.map(f =>
@@ -340,7 +402,7 @@
             { v: 'serving', label: food.servLabel || 'Serving' }, { v: 'g', label: 'Grams' }
           ], startUnit)) + '</div>' +
         '</div>' +
-        field('Meal', segmented('meal', S.MEALS.map(m => ({ v: m, label: S.MEAL_LABEL[m] })), meal)) +
+        field('Meal', segmented('meal', S.meals().map(m => ({ v: m.id, label: m.name })), meal)) +
         '<div class="preview" id="prev"></div>' +
         '<div class="row gap">' +
           (existing ? '<button class="btn danger" id="del">Delete</button>' : '') +
@@ -441,7 +503,7 @@
         field('Name', '<input id="n" value="' + esc(entry.name) + '">') +
         field('Calories', '<input type="number" inputmode="numeric" id="k" value="' + entry.kcal + '">') +
         field('Protein (g)', '<input type="number" inputmode="decimal" id="p" step="any" value="' + entry.p + '">') +
-        field('Meal', segmented('meal', S.MEALS.map(m => ({ v: m, label: S.MEAL_LABEL[m] })), entry.meal)) +
+        field('Meal', segmented('meal', S.meals().map(m => ({ v: m.id, label: m.name })), entry.meal)) +
         '<div class="row gap">' +
           '<button class="btn danger" id="del">Delete</button>' +
           '<button class="btn primary flex1" id="ok">Save</button>' +
@@ -461,15 +523,18 @@
     });
   }
 
-  function quickAdd() {
-    sheet('Quick add', (body, close) => {
+  function quickAdd(prefillName, prefillMeal) {
+    sheet('Just calories', (body, close) => {
       body.innerHTML =
-        '<p class="muted small" style="margin:-6px 0 14px">For when you know the calories but not the detail.</p>' +
-        field('Name', '<input id="n" placeholder="e.g. Lunch out">') +
+        '<p class="muted small" style="margin:-6px 0 14px">Give it a name and a number. Use this for a takeaway, ' +
+        'someone else’s cooking, or anything you cannot be bothered to weigh.</p>' +
+        field('Name', '<input id="n" value="' + esc(prefillName || '') + '" placeholder="e.g. Nando’s">') +
         field('Calories', '<input type="number" inputmode="numeric" id="k" placeholder="0">') +
         field('Protein (g), optional', '<input type="number" inputmode="decimal" id="p" step="any" placeholder="0">') +
-        field('Meal', segmented('meal', S.MEALS.map(m => ({ v: m, label: S.MEAL_LABEL[m] })), 'snacks')) +
+        field('Meal', segmented('meal', S.meals().map(m => ({ v: m.id, label: m.name })),
+          prefillMeal || defaultMealId())) +
         '<button class="btn primary wide" id="ok">Add</button>';
+      setTimeout(() => $(prefillName ? '#k' : '#n', body).focus(), 250);
       $('#ok', body).onclick = () => {
         const k = Number($('#k', body).value) || 0;
         if (k <= 0) { toast('Enter the calories.'); return; }
@@ -486,9 +551,11 @@
 
   /* ---- custom foods ---- */
 
-  function editCustomFood(existing) {
+  /* `prefillName` and `thenLogTo` let this double as the "no match — create it"
+     path out of search: save the food, then go straight on to logging it. */
+  function editCustomFood(existing, prefillName, thenLogTo) {
     sheet(existing ? 'Edit food' : 'New food', (body, close) => {
-      const f = existing || { name: '', kcal100: '', p100: '', c100: '', f100: '', servG: 100, servLabel: '1 serving' };
+      const f = existing || { name: prefillName || '', kcal100: '', p100: '', c100: '', f100: '', servG: 100, servLabel: '1 serving' };
       body.innerHTML =
         '<p class="muted small" style="margin:-6px 0 14px">Enter the values per 100 g, straight off the packet.</p>' +
         field('Name', '<input id="n" value="' + esc(f.name) + '" placeholder="e.g. Tesco protein yoghurt">') +
@@ -522,9 +589,15 @@
           servLabel: $('#sl', body).value.trim() || '1 serving',
           cat: 'My foods', src: 'custom'
         };
+        let saved = existing;
         if (existing) Object.assign(existing, data);
-        else S.get().customFoods.unshift(Object.assign({ ref: 'c:' + U.uid() }, data));
+        else {
+          saved = Object.assign({ ref: 'c:' + U.uid() }, data);
+          S.get().customFoods.unshift(saved);
+        }
         S.save(); close(); render(); toast('Saved');
+        // Came here from a fruitless search: carry straight on to logging it.
+        if (thenLogTo && saved) setTimeout(() => openPortion(saved, thenLogTo, null), 200);
       };
       const del = $('#del', body);
       if (del) del.onclick = () => confirmSheet('Delete food?',
@@ -914,13 +987,21 @@
     }
     html += '</section>';
 
-    /* chart */
-    const pts = ws.map(w => ({ x: U.dayNumber(w.d), y: w.kg, label: shortDate(w.d) }));
-    const avg = C.movingAverage(ws.map(w => w.kg), 7);
+    /* chart, over a selectable window */
+    const windows = { '30': 30, '90': 90, '365': 365, 'all': 99999 };
+    const cutoffDate = U.shiftDate(U.today(), -windows[weightRange]);
+    const shown = weightRange === 'all' ? ws : ws.filter(w => w.d >= cutoffDate);
+    const pts = shown.map(w => ({ x: U.dayNumber(w.d), y: w.kg, label: shortDate(w.d) }));
+    const avg = C.movingAverage(shown.map(w => w.kg), 7);
     const overlay = pts.map((pt, i) => ({ x: pt.x, y: avg[i] }));
     html += '<section class="card"><h2 class="card-title">Weight history' +
       '<span class="card-note">7-day average</span></h2>' +
-      lineChart(pts, { overlay, goal: p.goalWeightKg, dp: 1 }) + '</section>';
+      segmented('wrange', [
+        { v: '30', label: '30d' }, { v: '90', label: '90d' },
+        { v: '365', label: '1y' }, { v: 'all', label: 'All' }
+      ], weightRange) +
+      '<div style="margin-top:14px">' + lineChart(pts, { overlay, goal: p.goalWeightKg, dp: 1 }) + '</div>' +
+    '</section>';
 
     /* measurements */
     const withExtras = ws.filter(w => w.waistCm || w.bf).slice(-1)[0];
@@ -954,6 +1035,8 @@
   function bindBody() {
     $$('[data-weigh]', app).forEach(b => b.onclick = () => openWeight(U.today()));
     $$('[data-w]', app).forEach(li => li.onclick = () => openWeight(li.dataset.w));
+    const range = $('[data-seg="wrange"]', app);
+    if (range) range.addEventListener('pick', e => { weightRange = e.detail; render(); });
   }
 
   function openWeight(forDate) {
@@ -1181,6 +1264,56 @@
     input.click();
   }
 
+  /* ================= QUICK LOG (floating button) ================= */
+
+  function openQuickLog() {
+    sheet('Log something', (body, close) => {
+      const meals = S.meals();
+      // Distinct icons make the meal you want easier to hit without reading.
+      const mealIcons = ['&#127859;', '&#129386;', '&#127869;', '&#127822;', '&#129371;', '&#127853;'];
+      body.innerHTML =
+        '<div class="tiles">' +
+          meals.slice(0, 6).map((m, i) =>
+            '<button class="tile" data-qmeal="' + esc(m.id) + '">' +
+              '<span class="tile-icon">' + mealIcons[i % mealIcons.length] + '</span>' +
+              '<span class="tile-label">' + esc(m.name) + '</span></button>').join('') +
+        '</div>' +
+        '<div class="tiles">' +
+          '<button class="tile" data-q="quick"><span class="tile-icon">&#9889;</span><span class="tile-label">Just calories</span></button>' +
+          '<button class="tile" data-q="water"><span class="tile-icon">&#128167;</span><span class="tile-label">Water</span></button>' +
+          '<button class="tile" data-q="weight"><span class="tile-icon">&#9878;</span><span class="tile-label">Weight</span></button>' +
+          '<button class="tile" data-q="cardio"><span class="tile-icon">&#127939;</span><span class="tile-label">Activity</span></button>' +
+          '<button class="tile" data-q="lift"><span class="tile-icon">&#127947;</span><span class="tile-label">Lift</span></button>' +
+          '<button class="tile" data-q="steps"><span class="tile-icon">&#128099;</span><span class="tile-label">Steps</span></button>' +
+        '</div>';
+
+      $$('[data-qmeal]', body).forEach(b => b.onclick = () => {
+        const id = b.dataset.qmeal;
+        close();
+        openFoodPicker(id);
+      });
+
+      const actions = {
+        quick:  quickAdd,
+        weight: () => openWeight(date),
+        cardio: () => openCardio(null),
+        lift:   () => openLift(null),
+        steps:  openSteps,
+        water:  () => {
+          const d = S.day(date);
+          d.waterMl += 250;
+          S.save(); render();
+          toast('Water ' + d.waterMl + ' ml');
+        }
+      };
+      $$('[data-q]', body).forEach(b => b.onclick = () => {
+        const fn = actions[b.dataset.q];
+        close();
+        if (b.dataset.q === 'water') fn(); else setTimeout(fn, 180);
+      });
+    });
+  }
+
   /* ================= SETTINGS ================= */
 
   function openSettings() {
@@ -1219,12 +1352,13 @@
         field('Goal weight (kg), optional',
           '<input type="number" inputmode="decimal" step="any" id="gw" value="' + (p.goalWeightKg || '') + '">') +
 
-        '<h3 class="sub-title">Calories</h3>' +
+        '<h3 class="sub-title">Calorie goal</h3>' +
         field('Daily target', segmented('cmode', [
-          { v: 'auto', label: 'Work it out' }, { v: 'manual', label: 'I’ll set it' }
+          { v: 'auto', label: 'Work it out for me' }, { v: 'manual', label: 'I’ll set my own' }
         ], p.calorieMode)) +
         '<div id="manualCal" class="' + (p.calorieMode === 'manual' ? '' : 'hidden') + '">' +
-          field('Calories per day', '<input type="number" inputmode="numeric" id="mc" value="' + p.manualCalories + '">') +
+          field('My calorie goal', '<input type="number" inputmode="numeric" id="mc" value="' + p.manualCalories + '">',
+            'Your own number, used exactly as typed.') +
         '</div>' +
         '<div class="preview" id="calPrev"></div>' +
         switchRow('addEx', 'Add exercise calories to my budget', p.addExerciseCalories,
@@ -1257,6 +1391,13 @@
           '<div class="flex1">' + field('Water (ml)', '<input type="number" inputmode="numeric" id="wg" value="' + p.waterGoalMl + '">') + '</div>' +
           '<div class="flex1">' + field('Steps', '<input type="number" inputmode="numeric" id="sg" value="' + p.stepGoal + '">') + '</div>' +
         '</div>' +
+
+        '<h3 class="sub-title">Meals &amp; reminders</h3>' +
+        '<button type="button" class="btn ghost wide" id="mealsBtn">Name my meals</button>' +
+        '<button type="button" class="btn ghost wide" id="remindBtn">Reminders' +
+          (p.notificationsOn && G.Notify.permission() === 'granted'
+            ? ' <span class="pill on">' + p.reminders.filter(r => r.enabled).length + ' on</span>'
+            : ' <span class="pill">off</span>') + '</button>' +
 
         '<h3 class="sub-title">Appearance</h3>' +
         field('Theme', segmented('theme', [
@@ -1316,18 +1457,205 @@
       body.addEventListener('pick', preview);   // segmented controls bubble 'pick'
       preview();
 
-      $('#save', body).onclick = () => {
-        const next = collect();
-        Object.assign(S.get().profile, next, { onboarded: true });
+      /* Opening a sub-screen replaces this sheet, so anything typed is committed
+         first — otherwise a trip to "Name my meals" would quietly discard it. */
+      function commit() {
+        Object.assign(S.get().profile, collect(), { onboarded: true });
         const w = Number($('#wt', body).value);
         if (w > 0 && w !== kgNow) S.logWeight(U.today(), U.round(w, 1), {});
         S.save();
         applyTheme();
+      }
+
+      $('#mealsBtn', body).onclick = () => { commit(); manageMeals(); };
+      $('#remindBtn', body).onclick = () => { commit(); manageReminders(); };
+
+      $('#save', body).onclick = () => {
+        commit();
         close();
         render();
         toast('Settings saved');
       };
     }, { tall: true });
+  }
+
+  /* ================= MEAL NAMES ================= */
+
+  function manageMeals() {
+    sheet('My meals', (body) => {
+      function paint() {
+        const list = S.meals();
+        body.innerHTML =
+          '<p class="muted small" style="margin:-6px 0 16px">Name these whatever you actually eat — ' +
+          '“Pre-workout”, “Tea”, “Late night”. Renaming one keeps everything already logged to it.</p>' +
+          '<ul class="entries">' + list.map((m, i) =>
+            '<li class="entry">' +
+              '<div class="entry-main" data-rename="' + esc(m.id) + '">' +
+                '<div class="entry-name">' + esc(m.name) + '</div>' +
+                '<div class="entry-sub">Tap to rename</div>' +
+              '</div>' +
+              '<button class="x" data-up="' + esc(m.id) + '"' + (i === 0 ? ' disabled' : '') + ' aria-label="Move up">&#8593;</button>' +
+              '<button class="x" data-down="' + esc(m.id) + '"' + (i === list.length - 1 ? ' disabled' : '') + ' aria-label="Move down">&#8595;</button>' +
+              (list.length > 1
+                ? '<button class="x" data-rm="' + esc(m.id) + '" aria-label="Delete">&times;</button>' : '') +
+            '</li>').join('') + '</ul>' +
+          '<button class="btn ghost wide" id="addMeal">+ Add a meal</button>';
+
+        $$('[data-rename]', body).forEach(el => el.onclick = () => {
+          const id = el.dataset.rename;
+          const meal = S.meals().find(m => m.id === id);
+          sheet('Rename meal', (b2, close2) => {
+            b2.innerHTML = field('Name', '<input id="mn" value="' + esc(meal.name) + '" maxlength="24">') +
+                           '<button class="btn primary wide" id="ok2">Save</button>';
+            $('#ok2', b2).onclick = () => {
+              S.renameMeal(id, $('#mn', b2).value);
+              close2();
+              manageMeals();
+              render();
+            };
+            setTimeout(() => { const i = $('#mn', b2); i.focus(); i.select(); }, 250);
+          });
+        });
+
+        $$('[data-up]', body).forEach(b => b.onclick = () => { S.moveMeal(b.dataset.up, -1); paint(); render(); });
+        $$('[data-down]', body).forEach(b => b.onclick = () => { S.moveMeal(b.dataset.down, 1); paint(); render(); });
+
+        $$('[data-rm]', body).forEach(b => b.onclick = () => {
+          const id = b.dataset.rm;
+          const meal = S.meals().find(m => m.id === id);
+          const others = S.meals().filter(m => m.id !== id);
+          confirmSheet('Delete “' + meal.name + '”?',
+            'Anything logged to it moves to “' + others[0].name + '” so no calories are lost.',
+            () => { S.deleteMeal(id, others[0].id); manageMeals(); render(); });
+        });
+
+        $('#addMeal', body).onclick = () => {
+          sheet('New meal', (b2, close2) => {
+            b2.innerHTML = field('Name', '<input id="mn" placeholder="e.g. Pre-workout" maxlength="24">') +
+                           '<button class="btn primary wide" id="ok2">Add</button>';
+            $('#ok2', b2).onclick = () => {
+              const v = $('#mn', b2).value.trim();
+              if (!v) { toast('Give it a name.'); return; }
+              S.addMeal(v);
+              close2();
+              manageMeals();
+              render();
+            };
+            setTimeout(() => $('#mn', b2).focus(), 250);
+          });
+        };
+      }
+      paint();
+    }, { tall: true });
+  }
+
+  /* ================= REMINDERS ================= */
+
+  function manageReminders() {
+    sheet('Reminders', (body) => {
+      function paint() {
+        const p = S.get().profile;
+        const perm = G.Notify.permission();
+        const blocked = perm === 'denied';
+        const unsupported = perm === 'unsupported';
+
+        body.innerHTML =
+          (unsupported
+            ? '<div class="notice bad">This browser cannot show notifications. On iPhone you need iOS 16.4 or newer, ' +
+              'and the app must be added to your home screen.</div>'
+            : blocked
+              ? '<div class="notice bad">Notifications are blocked for this site. Turn them back on in your browser ' +
+                'or phone settings, then come back here.</div>'
+              : perm !== 'granted'
+                ? '<div class="notice">Your phone needs to allow notifications first.</div>' +
+                  '<button class="btn primary wide" id="ask">Allow notifications</button>'
+                : '') +
+
+          (perm === 'granted'
+            ? switchRow('notifOn', 'Reminders on', p.notificationsOn,
+                'Nudges you to log meals, drink water and weigh in.')
+            : '') +
+
+          '<h3 class="sub-title">Times</h3>' +
+          '<ul class="entries">' + p.reminders.map(r =>
+            '<li class="entry">' +
+              '<div class="entry-main">' +
+                '<div class="entry-name">' + esc(r.label) + '</div>' +
+                '<div class="entry-sub">' + (r.enabled ? 'On at ' + esc(r.time) : 'Off') + '</div>' +
+              '</div>' +
+              '<input type="time" class="time-input" data-time="' + esc(r.id) + '" value="' + esc(r.time) + '">' +
+              '<label class="switch"><input type="checkbox" data-on="' + esc(r.id) + '"' +
+                (r.enabled ? ' checked' : '') + '><i></i></label>' +
+            '</li>').join('') + '</ul>' +
+
+          (perm === 'granted' ? '<button class="btn ghost wide" id="testN">Send a test notification</button>' : '') +
+
+          '<div class="notice" style="margin-top:18px">' +
+            '<b>Worth knowing.</b> A web app cannot hand alarms to your phone the way a ' +
+            'shop-installed app can. Reminders fire reliably while Fuel is open or running in the ' +
+            'background — on Android that is most of the time once it is installed to your home screen. ' +
+            'On iPhone, if you swipe the app away it sleeps and nothing fires until you open it again. ' +
+            'Anything you missed is shown the next time you open it.' +
+          '</div>';
+
+        const ask = $('#ask', body);
+        if (ask) ask.onclick = async () => {
+          const res = await G.Notify.request();
+          if (res === 'granted') {
+            S.get().profile.notificationsOn = true;
+            S.save();
+            G.Notify.start();
+            toast('Notifications allowed');
+          } else if (res === 'denied') {
+            toast('Your phone said no');
+          }
+          paint();
+        };
+
+        const notifOn = $('#notifOn', body);
+        if (notifOn) notifOn.onchange = () => {
+          S.get().profile.notificationsOn = notifOn.checked;
+          S.save();
+          if (notifOn.checked) G.Notify.start(); else G.Notify.stop();
+          paint();
+        };
+
+        $$('[data-time]', body).forEach(inp => inp.onchange = () => {
+          const r = S.get().profile.reminders.find(x => x.id === inp.dataset.time);
+          if (r) { r.time = inp.value; r.lastFired = null; S.save(); paint(); }
+        });
+
+        $$('[data-on]', body).forEach(cb => cb.onchange = async () => {
+          const r = S.get().profile.reminders.find(x => x.id === cb.dataset.on);
+          if (!r) return;
+          r.enabled = cb.checked;
+          // Turning one on for the first time implies wanting reminders at all.
+          if (cb.checked && G.Notify.permission() === 'granted') {
+            S.get().profile.notificationsOn = true;
+            G.Notify.start();
+          }
+          S.save();
+          paint();
+        });
+
+        const testN = $('#testN', body);
+        if (testN) testN.onclick = async () => {
+          const ok = await G.Notify.test();
+          toast(ok ? 'Sent — check your notifications' : 'Could not send it');
+        };
+      }
+      paint();
+    }, { tall: true });
+  }
+
+  /* Reminders whose time passed while the app was shut are shown on reopen. */
+  function showMissedReminders() {
+    const p = S.get().profile;
+    if (!p.notificationsOn) return;
+    const missed = G.Notify.overdue().filter(r => r.enabled);
+    if (!missed.length) return;
+    missed.forEach(G.Notify.markFired);
+    toast(missed.length === 1 ? missed[0].label : missed.length + ' reminders while you were away');
   }
 
   /* ================= ONBOARDING ================= */
@@ -1415,12 +1743,14 @@
   function boot() {
     app = $('#app');
     nav = $('#nav');
+    fab = $('#fab');
     S.load();
     applyTheme();
 
     $$('.nav-btn', nav).forEach(b => b.onclick = () => go(b.dataset.view));
     $('#settingsBtn').onclick = openSettings;
     $('#todayBtn').onclick = () => { date = U.today(); go('today'); render(); };
+    fab.onclick = openQuickLog;
 
     // Rolling over midnight while the app sits open should land you on the new day.
     let lastSeen = U.today();
@@ -1439,7 +1769,14 @@
     if (!S.get().profile.onboarded) openOnboarding();
 
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js').catch(() => {});
+      navigator.serviceWorker.register('./sw.js')
+        .then(reg => G.Notify.setRegistration(reg))
+        .catch(() => {});
+    }
+
+    if (S.get().profile.notificationsOn && G.Notify.permission() === 'granted') {
+      showMissedReminders();
+      G.Notify.start();
     }
   }
 
