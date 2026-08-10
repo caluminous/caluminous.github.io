@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="gm" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4ff0a6"/>
+      <stop offset="1" stop-color="#26b87a"/>
+    </linearGradient>
+  </defs>
+  <!-- Maskable: artwork kept inside the middle 80% safe zone. -->
+  <rect width="512" height="512" fill="#0d1017"/>
+  <circle cx="256" cy="256" r="118" fill="none" stroke="#1e2432" stroke-width="28"/>
+  <circle cx="256" cy="256" r="118" fill="none" stroke="url(#gm)" stroke-width="28"
+          stroke-linecap="round" stroke-dasharray="741" stroke-dashoffset="212"
+          transform="rotate(-90 256 256)"/>
+  <path d="M256 179c27 24 41 49 41 74a41 41 0 0 1-82 0c0-14 6-27 16-38 3 11 9 18 16 21-5-22 0-41 9-57z"
+        fill="url(#gm)"/>
+</svg>

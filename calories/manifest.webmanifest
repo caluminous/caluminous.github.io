@@ -1,0 +1,16 @@
+{
+  "name": "Fuel — calorie & training tracker",
+  "short_name": "Fuel",
+  "description": "Track calories, macros, water, weight and workouts. Works out your maintenance calories and daily target. Fully offline — all data stays on your phone.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0d1017",
+  "theme_color": "#0d1017",
+  "categories": ["health", "fitness", "lifestyle"],
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

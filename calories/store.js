@@ -1,0 +1,354 @@
+/* Fuel — state, persistence and the derived-totals layer. */
+(function (G) {
+  'use strict';
+
+  const KEY = 'fuel-tracker-v1';
+  const MEALS = ['breakfast', 'lunch', 'dinner', 'snacks'];
+  const MEAL_LABEL = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snacks: 'Snacks' };
+
+  /* ---------------- utilities ---------------- */
+
+  const pad = n => String(n).padStart(2, '0');
+  const iso = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const today = () => iso(new Date());
+
+  function parseISO(s) {
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+
+  /* Days since epoch — used for trend maths, avoids timezone drift. */
+  const dayNumber = s => Math.round(parseISO(s).getTime() / 86400000);
+
+  function shiftDate(isoStr, days) {
+    const d = parseISO(isoStr);
+    d.setDate(d.getDate() + days);
+    return iso(d);
+  }
+
+  function friendlyDate(isoStr) {
+    const t = today();
+    if (isoStr === t) return 'Today';
+    if (isoStr === shiftDate(t, -1)) return 'Yesterday';
+    if (isoStr === shiftDate(t, 1)) return 'Tomorrow';
+    const d = parseISO(isoStr);
+    const sameYear = d.getFullYear() === new Date().getFullYear();
+    return d.toLocaleDateString('en-GB', {
+      weekday: 'short', day: 'numeric', month: 'short',
+      year: sameYear ? undefined : 'numeric'
+    });
+  }
+
+  const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+  const round = (n, dp = 0) => { const m = Math.pow(10, dp); return Math.round((n || 0) * m) / m; };
+  const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  G.Util = { pad, iso, today, parseISO, dayNumber, shiftDate, friendlyDate, uid, round, clamp, esc };
+
+  /* ---------------- defaults ---------------- */
+
+  function defaultState() {
+    return {
+      v: 1,
+      created: today(),
+      profile: {
+        sex: 'male',
+        age: 25,
+        heightCm: 178,
+        activity: 1.375,
+        goalType: 'lose',
+        rateKgWeek: 0.5,
+        goalWeightKg: null,
+        calorieMode: 'auto',
+        manualCalories: 2200,
+        proteinMode: 'gkg',
+        proteinGkg: 1.8,
+        manualProtein: 150,
+        proteinPercent: 30,
+        fatPercent: 27,
+        trackMacros: true,
+        waterGoalMl: 2500,
+        stepGoal: 8000,
+        addExerciseCalories: true,
+        units: { weight: 'kg', height: 'cm' },
+        theme: 'dark',
+        onboarded: false
+      },
+      days: {},
+      weights: [],
+      customFoods: [],
+      recipes: [],
+      favourites: [],
+      recents: []
+    };
+  }
+
+  /* ---------------- load / save ---------------- */
+
+  let state = defaultState();
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        state = migrate(parsed);
+      }
+    } catch (err) {
+      console.warn('Could not read saved data, starting fresh.', err);
+    }
+    return state;
+  }
+
+  /* Merge saved data over the defaults so fields added in later versions appear
+     for people who already have data. Everything copies into fresh objects —
+     assigning onto `base` directly would replace the defaults before they are
+     read, and newly added fields would silently never arrive. */
+  function migrate(saved) {
+    const base = defaultState();
+    const savedProfile = (saved && saved.profile) || {};
+
+    const profile = Object.assign({}, base.profile, savedProfile);
+    profile.units = Object.assign({}, base.profile.units, savedProfile.units || {});
+
+    const merged = Object.assign({}, base, saved, { profile });
+
+    if (!merged.days || typeof merged.days !== 'object' || Array.isArray(merged.days)) {
+      merged.days = {};
+    }
+    for (const k of ['weights', 'customFoods', 'recipes', 'favourites', 'recents']) {
+      if (!Array.isArray(merged[k])) merged[k] = [];
+    }
+    return merged;
+  }
+
+  let saveTimer = null;
+  function save() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      try {
+        localStorage.setItem(KEY, JSON.stringify(state));
+      } catch (err) {
+        alert('Could not save — your device storage may be full.');
+      }
+    }, 120);
+  }
+
+  const get = () => state;
+
+  function replace(next) {
+    state = migrate(next);
+    save();
+  }
+
+  function reset() {
+    state = defaultState();
+    save();
+  }
+
+  /* ---------------- day access ---------------- */
+
+  function day(dateStr) {
+    if (!state.days[dateStr]) {
+      state.days[dateStr] = { food: [], cardio: [], strength: [], waterMl: 0, steps: 0, note: '' };
+    }
+    const d = state.days[dateStr];
+    d.food = d.food || []; d.cardio = d.cardio || []; d.strength = d.strength || [];
+    d.waterMl = d.waterMl || 0; d.steps = d.steps || 0;
+    return d;
+  }
+
+  /* True only when something was actually recorded — used for streaks and stats. */
+  function dayHasData(dateStr) {
+    const d = state.days[dateStr];
+    if (!d) return false;
+    return (d.food && d.food.length > 0) || (d.cardio && d.cardio.length > 0) ||
+           (d.strength && d.strength.length > 0) || d.waterMl > 0 || d.steps > 0;
+  }
+
+  /* ---------------- food resolution ---------------- */
+
+  function resolveFood(ref) {
+    if (!ref) return null;
+    const [kind, id] = ref.split(':');
+    if (kind === 'b') return G.DB.FOODS[Number(id)] || null;
+    if (kind === 'c') return state.customFoods.find(f => f.ref === ref) || null;
+    if (kind === 'r') {
+      const r = state.recipes.find(x => x.ref === ref);
+      return r ? recipeAsFood(r) : null;
+    }
+    return null;
+  }
+
+  /* A recipe behaves exactly like a food once its per-100g values are worked out. */
+  function recipeAsFood(recipe) {
+    let g = 0, kcal = 0, p = 0, c = 0, f = 0;
+    for (const item of recipe.items) {
+      const food = resolveFood(item.ref);
+      if (!food) continue;
+      const m = item.grams / 100;
+      g += item.grams;
+      kcal += food.kcal100 * m; p += food.p100 * m; c += food.c100 * m; f += food.f100 * m;
+    }
+    const servings = Math.max(1, recipe.servings || 1);
+    const per100 = g > 0 ? 100 / g : 0;
+    return {
+      ref: recipe.ref, name: recipe.name, cat: 'My recipes', src: 'recipe',
+      kcal100: round(kcal * per100, 1), p100: round(p * per100, 1),
+      c100: round(c * per100, 1), f100: round(f * per100, 1),
+      servG: round(g / servings), servLabel: '1 serving', totalG: round(g)
+    };
+  }
+
+  function allFoods() {
+    return state.recipes.map(recipeAsFood).concat(state.customFoods, G.DB.FOODS);
+  }
+
+  function searchFoods(query) {
+    const q = query.trim().toLowerCase();
+    const list = allFoods();
+    if (!q) return list;
+    const terms = q.split(/\s+/);
+    return list
+      .map(f => {
+        const name = f.name.toLowerCase();
+        if (!terms.every(t => name.includes(t))) return null;
+        // Rank: exact match, then prefix match, then anything else.
+        let score = 2;
+        if (name === q) score = 0;
+        else if (name.startsWith(q)) score = 1;
+        return { f, score };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.score - b.score || a.f.name.length - b.f.name.length)
+      .map(x => x.f);
+  }
+
+  function noteRecent(ref) {
+    state.recents = [ref].concat(state.recents.filter(r => r !== ref)).slice(0, 40);
+  }
+
+  function toggleFavourite(ref) {
+    const i = state.favourites.indexOf(ref);
+    if (i >= 0) state.favourites.splice(i, 1);
+    else state.favourites.unshift(ref);
+    save();
+  }
+
+  const isFavourite = ref => state.favourites.includes(ref);
+
+  /* ---------------- weight ---------------- */
+
+  /* One entry per date — logging again replaces that day's reading. */
+  function logWeight(dateStr, kg, extras) {
+    const existing = state.weights.find(w => w.d === dateStr);
+    if (existing) Object.assign(existing, { kg }, extras || {});
+    else state.weights.push(Object.assign({ d: dateStr, kg }, extras || {}));
+    state.weights.sort((a, b) => a.d.localeCompare(b.d));
+    save();
+  }
+
+  function deleteWeight(dateStr) {
+    state.weights = state.weights.filter(w => w.d !== dateStr);
+    save();
+  }
+
+  /* The weight to use for calculations on a given day: the most recent reading
+     on or before it, falling back to the earliest reading we have. */
+  function weightOn(dateStr) {
+    const list = state.weights;
+    if (!list.length) return null;
+    let best = null;
+    for (const w of list) { if (w.d <= dateStr) best = w; else break; }
+    return best ? best.kg : list[0].kg;
+  }
+
+  const latestWeight = () => (state.weights.length ? state.weights[state.weights.length - 1].kg : null);
+
+  /* ---------------- derived totals ---------------- */
+
+  function foodTotals(dateStr) {
+    const d = day(dateStr);
+    return d.food.reduce((t, e) => {
+      t.kcal += e.kcal; t.p += e.p; t.c += e.c; t.f += e.f;
+      return t;
+    }, { kcal: 0, p: 0, c: 0, f: 0 });
+  }
+
+  function mealTotals(dateStr, meal) {
+    return day(dateStr).food.filter(e => e.meal === meal).reduce((t, e) => {
+      t.kcal += e.kcal; t.p += e.p; t.c += e.c; t.f += e.f;
+      return t;
+    }, { kcal: 0, p: 0, c: 0, f: 0 });
+  }
+
+  function burnedTotal(dateStr) {
+    const d = day(dateStr);
+    const cardio = d.cardio.reduce((s, e) => s + (e.kcal || 0), 0);
+    const strength = d.strength.reduce((s, w) => s + (w.kcal || 0), 0);
+    return Math.round(cardio + strength);
+  }
+
+  /* Everything the Today screen needs, in one shot. */
+  function summary(dateStr) {
+    const p = state.profile;
+    const kg = weightOn(dateStr) || latestWeight();
+    const targets = G.Calc.macroTargets(p, kg);
+    const eaten = foodTotals(dateStr);
+    const burned = burnedTotal(dateStr);
+    const budget = targets.kcal + (p.addExerciseCalories ? burned : 0);
+    return {
+      date: dateStr,
+      weightKg: kg,
+      targets,
+      eaten: { kcal: round(eaten.kcal), p: round(eaten.p), c: round(eaten.c), f: round(eaten.f) },
+      burned,
+      budget,
+      remaining: Math.round(budget - eaten.kcal),
+      maintenance: Math.round(G.Calc.tdee(p, kg)),
+      bmr: Math.round(G.Calc.bmr(p, kg)),
+      water: day(dateStr).waterMl,
+      steps: day(dateStr).steps
+    };
+  }
+
+  /* Consecutive days with any logged data, counting back from today.
+     Today not being logged yet does not break a streak that ran to yesterday. */
+  function streak() {
+    let n = 0;
+    let cursor = today();
+    if (!dayHasData(cursor)) cursor = shiftDate(cursor, -1);
+    while (dayHasData(cursor)) { n++; cursor = shiftDate(cursor, -1); }
+    return n;
+  }
+
+  /* ---------------- export / import ---------------- */
+
+  function exportJSON() {
+    return JSON.stringify(state, null, 2);
+  }
+
+  function importJSON(text) {
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object' || !parsed.profile) {
+      throw new Error('That file does not look like a Fuel backup.');
+    }
+    replace(parsed);
+  }
+
+  G.Store = {
+    KEY, MEALS, MEAL_LABEL,
+    load, save, get, replace, reset, defaultState,
+    day, dayHasData, summary, foodTotals, mealTotals, burnedTotal, streak,
+    resolveFood, recipeAsFood, allFoods, searchFoods, noteRecent,
+    toggleFavourite, isFavourite,
+    logWeight, deleteWeight, weightOn, latestWeight,
+    exportJSON, importJSON
+  };
+})(window);
