@@ -385,7 +385,12 @@
   function summary(dateStr) {
     const p = state.profile;
     const kg = weightOn(dateStr) || latestWeight();
-    const targets = G.Calc.macroTargets(p, kg);
+    const override = day(dateStr).goalKcal;
+    /* A one-day goal runs through the same macro maths as the everyday one, so
+       protein, carbs and fat stay consistent with the number shown. */
+    const targets = override
+      ? G.Calc.macroTargets(Object.assign({}, p, { calorieMode: 'manual', manualCalories: override }), kg)
+      : G.Calc.macroTargets(p, kg);
     const eaten = foodTotals(dateStr);
     const burned = burnedTotal(dateStr);
     const budget = targets.kcal + (p.addExerciseCalories ? burned : 0);
@@ -400,8 +405,30 @@
       maintenance: Math.round(G.Calc.tdee(p, kg)),
       bmr: Math.round(G.Calc.bmr(p, kg)),
       water: day(dateStr).waterMl,
-      steps: day(dateStr).steps
+      steps: day(dateStr).steps,
+      goalOverridden: !!override
     };
+  }
+
+  /* Set the everyday calorie goal — the number used on every day without its own. */
+  function setDailyGoal(kcal) {
+    state.profile.calorieMode = 'manual';
+    state.profile.manualCalories = Math.max(1, Math.round(kcal));
+    save();
+  }
+
+  /* Hand the everyday goal back to the calculator. */
+  function useCalculatedGoal() {
+    state.profile.calorieMode = 'auto';
+    save();
+  }
+
+  /* Set (or with a falsy value, clear) a goal that applies to one day only. */
+  function setDayGoal(dateStr, kcal) {
+    const d = day(dateStr);
+    if (kcal) d.goalKcal = Math.max(1, Math.round(kcal));
+    else delete d.goalKcal;
+    save();
   }
 
   /* Consecutive days with any logged data, counting back from today.
@@ -455,6 +482,7 @@
     copyFood, lastFoodDay,
     load, save, get, replace, reset, defaultState,
     day, dayHasData, summary, foodTotals, mealTotals, burnedTotal, streak,
+    setDailyGoal, useCalculatedGoal, setDayGoal,
     resolveFood, recipeAsFood, allFoods, searchFoods, noteRecent,
     toggleFavourite, isFavourite,
     logWeight, deleteWeight, weightOn, latestWeight,

@@ -493,6 +493,24 @@ body.no-scroll #fab { display: none; }
 .tile-icon { font-size: 22px; line-height: 1; }
 .tile-label { font-size: 12px; font-weight: 650; text-align: center; line-height: 1.25; }
 
+/* ---------------- tappable stat ---------------- */
+
+.stat.tappable {
+  background: none; border: 1px solid var(--line); border-radius: 13px; cursor: pointer;
+  font: inherit; color: inherit;
+}
+.stat.tappable:active { background: var(--card2); }
+.edit-hint {
+  display: inline-block; margin-left: 4px; padding: 1px 6px; border-radius: 5px;
+  background: var(--acc-dim); color: var(--acc);
+  font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px;
+}
+
+.goal-now { text-align: center; padding: 6px 0 18px; }
+.goal-now-v { font-size: 40px; font-weight: 800; letter-spacing: -1.4px; line-height: 1.05; }
+.goal-now-v small { font-size: 15px; font-weight: 600; color: var(--fg2); }
+.goal-now-l { font-size: 12.5px; color: var(--fg2); margin-top: 6px; }
+
 /* ---------------- notices ---------------- */
 
 .notice {

@@ -85,13 +85,18 @@
         ring(pct, over ? 'over by' : 'remaining', kcal(Math.abs(s.remaining)), 'kcal', over ? 'bad' : '') +
       '</div>' +
       '<div class="hero-stats">' +
-        statCell('Target', kcal(s.targets.kcal), 'kcal') +
+        '<button class="stat tappable" data-goal>' +
+          '<div class="stat-v">' + kcal(s.targets.kcal) + '<small>kcal</small></div>' +
+          '<div class="stat-l">Target <span class="edit-hint">edit</span></div>' +
+        '</button>' +
         statCell('Eaten', kcal(s.eaten.kcal), 'kcal') +
         statCell('Burned', kcal(s.burned), 'kcal') +
       '</div>' +
-      (p.addExerciseCalories && s.burned > 0
-        ? '<div class="hero-note">Budget today: ' + kcal(s.budget) + ' kcal (' + kcal(s.targets.kcal) + ' + ' + kcal(s.burned) + ' from exercise)</div>'
-        : '') +
+      (s.goalOverridden
+        ? '<div class="hero-note">Goal set just for this day. <b class="ok">Tap Target to change it.</b></div>'
+        : p.addExerciseCalories && s.burned > 0
+          ? '<div class="hero-note">Budget today: ' + kcal(s.budget) + ' kcal (' + kcal(s.targets.kcal) + ' + ' + kcal(s.burned) + ' from exercise)</div>'
+          : '') +
     '</section>';
 
     /* macros */
@@ -172,6 +177,7 @@
     '<div class="stat-l">' + esc(label) + '</div></div>';
 
   function bindToday() {
+    $('[data-goal]', app).onclick = openCalorieGoal;
     $$('[data-water]', app).forEach(b => b.onclick = () => {
       const d = S.day(date);
       d.waterMl = Math.max(0, d.waterMl + Number(b.dataset.water));
@@ -1090,7 +1096,8 @@
         numRow('Carbs', targets.carbs + ' g') +
         numRow('Fat', targets.fat + ' g') +
       '</div>' +
-      '<button class="btn ghost wide" data-settings>Adjust goals</button></section>';
+      '<button class="btn primary wide" data-goal>Set my calorie goal</button>' +
+      '<button class="btn ghost wide" data-settings>All goal settings</button></section>';
 
     /* last 7 days */
     const days = [];
@@ -1183,6 +1190,7 @@
     '<div class="nrow"><span>' + esc(label) + '</span><b>' + esc(value) + '</b></div>';
 
   function bindStats() {
+    $('[data-goal]', app).onclick = openCalorieGoal;
     $('[data-settings]', app).onclick = openSettings;
     $('[data-export]', app).onclick = exportData;
     $('[data-import]', app).onclick = importData;
@@ -1262,6 +1270,114 @@
       reader.readAsText(file);
     };
     input.click();
+  }
+
+  /* ================= CALORIE GOAL =================
+     A dedicated screen for the one number most people want to control, rather
+     than making them hunt through the settings form for it. */
+
+  function openCalorieGoal() {
+    sheet('Daily calorie goal', (body, close) => {
+      const p = S.get().profile;
+      const s = S.summary(date);
+      const kg = S.latestWeight();
+      const calculated = C.calorieTarget(Object.assign({}, p, { calorieMode: 'auto' }), kg);
+      const isToday = date === U.today();
+      const dayLabel = isToday ? 'today' : U.friendlyDate(date).toLowerCase();
+      const current = s.targets.kcal;
+
+      body.innerHTML =
+        '<div class="goal-now">' +
+          '<div class="goal-now-v">' + kcal(current) + '<small> kcal</small></div>' +
+          '<div class="goal-now-l">' +
+            (s.goalOverridden ? 'Set just for ' + esc(dayLabel)
+              : p.calorieMode === 'manual' ? 'Your own number, every day'
+              : 'Worked out from your body and goal') +
+          '</div>' +
+        '</div>' +
+
+        field('I want to eat', '<input type="number" inputmode="numeric" id="goalN" ' +
+          'value="' + current + '" min="500" max="10000">', 'Calories per day.') +
+
+        field('Apply it to', segmented('scope', [
+          { v: 'every', label: 'Every day' },
+          { v: 'day', label: 'Just ' + (isToday ? 'today' : 'this day') }
+        ], s.goalOverridden ? 'day' : 'every')) +
+
+        '<div class="preview" id="goalPrev"></div>' +
+
+        '<button class="btn primary wide" id="goalSave">Save goal</button>' +
+        (s.goalOverridden
+          ? '<button class="btn ghost wide" id="goalClearDay">Remove the ' + esc(dayLabel) + '-only goal</button>'
+          : '') +
+        (p.calorieMode === 'manual'
+          ? '<button class="btn ghost wide" id="goalAuto">Go back to the worked-out ' +
+            kcal(calculated) + ' kcal</button>'
+          : '') +
+
+        '<div class="notice" style="margin-top:18px">' +
+          '<b>For reference.</b> Maintenance is about ' + kcal(Math.round(C.tdee(p, kg))) + ' kcal — ' +
+          'eat that and your weight holds steady. Roughly 500 under is about ½ kg a week off; ' +
+          '500 over is about ½ kg a week on.' +
+        '</div>';
+
+      const input = $('#goalN', body);
+      const scopeSeg = $('[data-seg="scope"]', body);
+
+      function preview() {
+        const v = Number(input.value) || 0;
+        const maint = Math.round(C.tdee(p, kg));
+        const t = C.macroTargets(Object.assign({}, p, { calorieMode: 'manual', manualCalories: v }), kg);
+        const diff = v - maint;
+        const perWeek = Math.abs(diff) * 7 / C.KCAL_PER_KG_FAT;
+        $('#goalPrev', body).innerHTML = v > 0
+          ? '<div class="prev-macros">' +
+              '<span><b>' + t.protein + 'g</b> protein</span>' +
+              '<span><b>' + t.carbs + 'g</b> carbs</span>' +
+              '<span><b>' + t.fat + 'g</b> fat</span>' +
+            '</div>' +
+            '<div class="prev-g">' +
+              (Math.abs(diff) < 75
+                ? 'About your maintenance — weight should hold steady.'
+                : (diff < 0 ? 'About ' : 'About ') + U.round(perWeek, 2) + ' kg a week ' +
+                  (diff < 0 ? 'off' : 'on') + ', if you stick to it.') +
+            '</div>'
+          : '<div class="prev-g">Type a number above.</div>';
+      }
+      input.oninput = preview;
+      scopeSeg.addEventListener('pick', preview);
+      preview();
+
+      $('#goalSave', body).onclick = () => {
+        const v = Number(input.value) || 0;
+        if (v < 500 || v > 10000) { toast('Enter something between 500 and 10,000.'); return; }
+        if (segValue(scopeSeg) === 'day') {
+          S.setDayGoal(date, v);
+        } else {
+          S.setDayGoal(date, null);   // an everyday goal replaces any one-day one
+          S.setDailyGoal(v);
+        }
+        close(); render();
+        toast('Goal set to ' + kcal(v) + ' kcal');
+      };
+
+      const clearDay = $('#goalClearDay', body);
+      if (clearDay) clearDay.onclick = () => {
+        S.setDayGoal(date, null);
+        close(); render();
+        toast('Back to your usual goal');
+      };
+
+      const auto = $('#goalAuto', body);
+      if (auto) auto.onclick = () => {
+        S.setDayGoal(date, null);
+        S.useCalculatedGoal();
+        close(); render();
+        toast('Using the worked-out goal');
+      };
+
+      setTimeout(() => { input.focus(); input.select(); }, 260);
+    });
   }
 
   /* ================= QUICK LOG (floating button) ================= */
@@ -1353,6 +1469,8 @@
           '<input type="number" inputmode="decimal" step="any" id="gw" value="' + (p.goalWeightKg || '') + '">') +
 
         '<h3 class="sub-title">Calorie goal</h3>' +
+        '<button type="button" class="btn ghost wide" id="goalBtn" style="margin-bottom:14px">' +
+          'Just set my number &rarr;</button>' +
         field('Daily target', segmented('cmode', [
           { v: 'auto', label: 'Work it out for me' }, { v: 'manual', label: 'I’ll set my own' }
         ], p.calorieMode)) +
@@ -1467,6 +1585,7 @@
         applyTheme();
       }
 
+      $('#goalBtn', body).onclick = () => { commit(); openCalorieGoal(); };
       $('#mealsBtn', body).onclick = () => { commit(); manageMeals(); };
       $('#remindBtn', body).onclick = () => { commit(); manageReminders(); };
 

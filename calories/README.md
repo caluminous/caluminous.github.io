@@ -12,7 +12,12 @@ It then launches full-screen like a normal app and works with no signal.
 
 ## What it does
 
-**Targets.** Works out BMR from the Mifflin-St Jeor equation, scales it by your
+**Your calorie goal.** Tap the Target number on the Today screen and type what you
+want to eat. Apply it to every day, or just to the day you are looking at — handy
+for training days, rest days or a night out. Protein, carbs and fat re-balance to
+whatever number you set, and you can hand the goal back to the calculator anytime.
+
+**Targets.** If you would rather it worked the number out, it uses BMR from the Mifflin-St Jeor equation, scales it by your
 day-to-day activity to get maintenance calories (TDEE), then applies a surplus or
 deficit from your goal and chosen rate of change. 1 kg of body tissue is treated as
 7,700 kcal. You can override the daily number by hand instead. A safety floor stops

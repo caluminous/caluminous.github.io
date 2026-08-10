@@ -2,7 +2,7 @@
    Strategy: precache the shell, then serve from cache while refreshing in the
    background, so the app opens instantly offline but still picks up updates. */
 
-const CACHE = 'fuel-v2';
+const CACHE = 'fuel-v3';
 const ASSETS = [
   './',
   './index.html',
