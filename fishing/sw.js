@@ -1,7 +1,7 @@
 /* Cast — service worker. Riverbanks have no signal, so the shell is cached hard and
    map tiles are kept in a separate, capped cache that survives going offline. */
 
-const SHELL = 'cast-shell-v2';
+const SHELL = 'cast-shell-v3';
 const TILES = 'cast-tiles-v1';
 const TILE_LIMIT = 400;
 
