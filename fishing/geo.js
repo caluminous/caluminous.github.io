@@ -135,17 +135,38 @@
   /* Overpass gives genuine coverage anywhere in the country, which a hand-written list
      never could. What it cannot tell us is whether you are allowed to fish there — so
      everything from here is flagged unverified and the UI must keep saying so. */
+  /* `out center 200` and not `out center tags 200`: the "tags" verbosity prints ids and
+     tags but NO coordinates, which silently drops every node — and a great many fishing
+     spots in OSM are nodes. Plain body verbosity gives nodes their lat/lon and ways a
+     computed centre, which is exactly what the map needs. */
   function overpassQuery(lat, lon, radiusM) {
     const r = Math.round(radiusM);
-    return `[out:json][timeout:25];
+    return `[out:json][timeout:30];
 (
   nwr["leisure"="fishing"](around:${r},${lat},${lon});
   nwr["fishing"="yes"](around:${r},${lat},${lon});
-  nwr["natural"="water"]["water"~"^(lake|pond|reservoir|lagoon|oxbow)$"]["name"](around:${r},${lat},${lon});
-  nwr["landuse"="reservoir"]["name"](around:${r},${lat},${lon});
+  nwr["natural"="water"]["water"~"^(lake|pond|reservoir|lagoon|oxbow|basin)$"](around:${r},${lat},${lon});
+  nwr["natural"="water"]["name"](around:${r},${lat},${lon});
+  nwr["landuse"="reservoir"](around:${r},${lat},${lon});
   way["waterway"~"^(river|canal)$"]["name"](around:${r},${lat},${lon});
 );
-out center tags 120;`;
+out center 200;`;
+  }
+
+  /* Name search. Restricting by a water/fishing tag first keeps this cheap even over a
+     whole-UK bounding box, because those tag sets are small compared with the name index. */
+  function overpassNameQuery(term) {
+    const safe = term.replace(/[\\"\[\]{}()*+?.^$|]/g, '\\$&');
+    const UK = '49.8,-8.7,61.0,2.1';
+    return `[out:json][timeout:40][bbox:${UK}];
+(
+  nwr["leisure"="fishing"]["name"~"${safe}",i];
+  nwr["fishing"="yes"]["name"~"${safe}",i];
+  nwr["natural"="water"]["name"~"${safe}",i];
+  nwr["landuse"="reservoir"]["name"~"${safe}",i];
+  way["waterway"~"^(river|canal)$"]["name"~"${safe}",i];
+);
+out center 60;`;
   }
 
   function classifyOsm(tags) {
@@ -155,8 +176,81 @@ out center tags 120;`;
     return 'stillwater';
   }
 
+  const WATER_WORD = { canal: 'Canal', river: 'River', reservoir: 'Reservoir', stillwater: 'Water' };
+
+  /* Turns raw Overpass elements into venues. Unnamed features are kept only when OSM
+     explicitly says they are fished — an unnamed farm pond is noise, but an unnamed peg
+     tagged leisure=fishing is exactly what an angler is looking for. */
+  function toVenues(elements) {
+    const seen = new Set();
+    const venues = [];
+
+    for (const el of (elements || [])) {
+      const tags = el.tags || {};
+      const pt = el.center || el;
+      if (typeof pt.lat !== 'number' || typeof pt.lon !== 'number') continue;
+
+      const type = classifyOsm(tags);
+      const explicitlyFished = tags.leisure === 'fishing' || tags.fishing === 'yes';
+      let name = tags.name || tags['name:en'] || null;
+      if (!name) {
+        if (!explicitlyFished) continue;
+        name = 'Fishing spot' + (tags.operator ? ' — ' + tags.operator : '');
+      }
+
+      /* One canal is many OSM ways. Collapse by name, but only within roughly the same
+         place, so two genuinely different "Mill Pond"s miles apart both survive. */
+      const key = name.toLowerCase() + '@' + pt.lat.toFixed(1) + ',' + pt.lon.toFixed(1);
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      venues.push({
+        id: 'osm-' + el.type + el.id,
+        name,
+        type,
+        lat: pt.lat,
+        lon: pt.lon,
+        ticket: null,
+        rating: null,
+        breakdown: null,
+        species: [],
+        facilities: tags['amenity'] === 'parking' ? ['parking'] : [],
+        notes: [
+          tags.operator ? 'Operated by ' + tags.operator + '.' : null,
+          explicitlyFished ? 'Tagged as fishable in OpenStreetMap.' : `${WATER_WORD[type]} from OpenStreetMap — nobody has recorded whether it can be fished.`
+        ].filter(Boolean).join(' '),
+        url: tags.website || tags['contact:website'] || null,
+        source: 'osm',
+        fished: explicitlyFished,
+        osmTags: tags,
+        checked: null
+      });
+    }
+    return venues;
+  }
+
+  /* Find waters by name across the whole UK — "Twynersh", "Bluebell Lakes", "River Wye". */
+  async function searchByName(term) {
+    const q = String(term || '').trim();
+    if (q.length < 3) return [];
+    const key = 'name:' + q.toLowerCase();
+    const result = await cached(key, 7 * 24 * 3600e3, async () => {
+      const body = 'data=' + encodeURIComponent(overpassNameQuery(q));
+      let lastErr;
+      for (const endpoint of OVERPASS) {
+        try {
+          return await getJson(endpoint, { method: 'POST', body, timeout: 45000 });
+        } catch (e) { lastErr = e; }
+      }
+      throw lastErr;
+    });
+    return toVenues(result.value.elements).filter((v) => v.name !== 'Fishing spot');
+  }
+
   async function discoverVenues(lat, lon, radiusMiles) {
-    const radiusM = Math.min(radiusMiles / MILES_PER_KM * 1000, 40000);
+    /* Capped: an `around` search over water tags gets expensive fast, and Overpass is a
+       free shared service. Beyond this the seed list carries the distance. */
+    const radiusM = Math.min(radiusMiles / MILES_PER_KM * 1000, 50000);
     const key = `osm:${lat.toFixed(2)},${lon.toFixed(2)}:${Math.round(radiusM / 1000)}`;
 
     const result = await cached(key, 7 * 24 * 3600e3, async () => {
@@ -170,41 +264,7 @@ out center tags 120;`;
       throw lastErr;
     });
 
-    const seen = new Set();
-    const venues = [];
-    for (const el of (result.value.elements || [])) {
-      const tags = el.tags || {};
-      const name = tags.name || tags['name:en'];
-      if (!name) continue;
-      const pt = el.center || el;
-      if (typeof pt.lat !== 'number' || typeof pt.lon !== 'number') continue;
-
-      /* One canal is many OSM ways. Collapse by name so the list is not fifty
-         identical rows for the Grand Union. */
-      const dedupe = name.toLowerCase();
-      if (seen.has(dedupe)) continue;
-      seen.add(dedupe);
-
-      venues.push({
-        id: 'osm-' + el.type + el.id,
-        name,
-        type: classifyOsm(tags),
-        lat: pt.lat,
-        lon: pt.lon,
-        ticket: null,
-        rating: null,
-        breakdown: null,
-        species: [],
-        facilities: [
-          tags.parking || tags['amenity'] === 'parking' ? 'parking' : null
-        ].filter(Boolean),
-        notes: tags.operator ? 'Operated by ' + tags.operator + '.' : null,
-        url: tags.website || tags['contact:website'] || null,
-        source: 'osm',
-        osmTags: tags,
-        checked: null
-      });
-    }
+    const venues = toVenues(result.value.elements);
     return { venues, stale: result.stale, fromCache: result.fromCache };
   }
 
@@ -223,7 +283,7 @@ out center tags 120;`;
   }
 
   G.geo = {
-    haversineMiles, driveMinutes, currentPosition, countryAt, search,
-    discoverVenues, forecast, getJson, MILES_PER_KM
+    haversineMiles, driveMinutes, currentPosition, countryAt, search, searchByName,
+    discoverVenues, forecast, getJson, MILES_PER_KM, POSTCODE_RE, OUTCODE_RE
   };
 })(window.Cast = window.Cast || {});

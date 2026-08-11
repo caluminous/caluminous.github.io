@@ -19,6 +19,10 @@ where to fish today, what it will legally cost, and what to put on the end of th
 
 - Request geolocation, with a manual postcode / place-name fallback for when it's
   denied or unavailable.
+- **Search by name, not just by location.** One box takes a postcode, a town, or the name
+  of a water — "Twynersh Fishery", "Bluebell Lakes", "River Wye". A postcode moves the
+  search area; anything else searches waters by name across the whole UK, built-in list
+  first and then OpenStreetMap on request. Partial names and single words must work.
 - List fishable waters within a user-set radius (default 25 miles), sorted by distance
   or by rating. Each row shows: name, water type (stillwater / river / canal /
   reservoir / coastal), star rating, distance, day-ticket price, the headline species,

@@ -13,6 +13,9 @@
     forecast: null,
     conditions: null,
     osm: [],
+    named: [],           /* waters pulled in by a by-name search */
+    namedFor: null,      /* the term A.named answers, so we do not re-query needlessly */
+    searching: false,
     osmStale: false,
     osmError: null,
     loading: false,
@@ -52,8 +55,11 @@
     const custom = store.state.customVenues.map(withOverrides);
     const base = seeds.concat(custom);
     const osm = store.state.filters.includeOsm ? dedupe(base, A.osm).map(withOverrides) : [];
+    /* Waters pulled in by a name search stay available too, so their detail page still
+       resolves after you tap through from the results. */
+    const found = dedupe(base.concat(osm), A.named).map(withOverrides);
     const hidden = new Set(store.state.hiddenVenues);
-    return base.concat(osm).filter((v) => !hidden.has(v.id));
+    return base.concat(osm, found).filter((v) => !hidden.has(v.id));
   }
 
   function decorate(v) {
@@ -186,11 +192,12 @@
     if (mapHost && mapHost.parentNode) mapHost.parentNode.removeChild(mapHost);
     root.innerHTML = '';
 
-    const views = { nearby, venue: venueView, species: speciesView, rigs: rigsView, log: logView, you: youView };
+    const views = { nearby, search: searchView, venue: venueView, species: speciesView, rigs: rigsView, log: logView, you: youView };
     (views[r.name] || nearby)(root, r);
 
     document.querySelectorAll('.nav-btn').forEach((b) => {
-      b.classList.toggle('active', b.dataset.view === (r.name === 'venue' || r.name === 'species' ? 'nearby' : r.name));
+      const owner = ['venue', 'species', 'search'].includes(r.name) ? 'nearby' : r.name;
+      b.classList.toggle('active', b.dataset.view === owner);
     });
     root.scrollTop = 0;
   }
@@ -221,8 +228,11 @@
     if (!list.length) {
       root.appendChild(h('div', { class: 'empty' }, [
         h('p', { text: 'Nothing matches inside that radius.' }),
-        h('p', { class: 'muted', text: 'Widen the search, clear a filter, or add a water you know about yourself.' }),
-        h('button', { class: 'btn', text: 'Add a venue', onclick: () => go('#/you?add=1') })
+        h('p', { class: 'muted', text: 'Widen the radius, clear a filter, search for a water by name, or add one you know about yourself.' }),
+        h('div', { class: 'btn-row' }, [
+          h('button', { class: 'btn', text: 'Search by name', onclick: () => document.getElementById('placeInput').focus() }),
+          h('button', { class: 'btn', text: 'Add a venue', onclick: () => go('#/you?add=1') })
+        ])
       ]));
       return;
     }
@@ -259,20 +269,125 @@
     return box;
   }
 
-  function locationBar() {
+  /* A postcode means "search around here". Anything else is treated as a name — of a
+     fishery, a lake, a river or a town — and goes to the results page. */
+  function submitSearch(raw) {
+    const q = String(raw || '').trim();
+    if (!q) return;
+    if (G.geo.POSTCODE_RE.test(q) || G.geo.OUTCODE_RE.test(q)) searchPlace(q);
+    else go('#/search?q=' + encodeURIComponent(q));
+  }
+
+  function locationBar(value) {
     const wrap = h('form', {
       class: 'location-bar',
-      onsubmit: (e) => { e.preventDefault(); searchPlace(document.getElementById('placeInput').value); }
+      onsubmit: (e) => { e.preventDefault(); submitSearch(document.getElementById('placeInput').value); }
     });
+    const shown = value != null ? value
+      : (A.location && A.location.label && A.location.label !== 'Where you are now' ? A.location.label : '');
     wrap.innerHTML = `
-      <input id="placeInput" type="search" inputmode="search" autocomplete="postal-code"
-             placeholder="Postcode or place" aria-label="Search by postcode or place"
-             value="${esc(A.location && A.location.label && A.location.label !== 'Where you are now' ? A.location.label : '')}">
-      <button type="submit" class="icon-btn" aria-label="Search">${icon('map', 18)}</button>
+      <input id="placeInput" type="search" inputmode="search" autocomplete="off"
+             placeholder="Fishery, lake, river or postcode" aria-label="Search for a fishery, lake, river or postcode"
+             value="${esc(shown)}">
+      <button type="submit" class="icon-btn" aria-label="Search">${icon('list', 18)}</button>
       <button type="button" id="locateBtn" class="icon-btn" aria-label="Use my location">${icon('pin', 18)}</button>`;
     wrap.querySelector('#locateBtn').addEventListener('click', locateMe);
     if (A.loading) wrap.classList.add('is-loading');
     return wrap;
+  }
+
+  /* ------------------------------------------------------------ view: search */
+
+  function matchScore(name, q) {
+    const n = name.toLowerCase().trim();
+    const t = q.toLowerCase().trim();
+    if (!t) return 0;
+    if (n === t) return 100;
+    if (n.startsWith(t)) return 80;
+    if (n.split(/[^a-z0-9]+/).some((w) => w && w.startsWith(t))) return 62;
+    if (n.includes(t)) return 45;
+    const words = t.split(/\s+/).filter(Boolean);
+    if (words.length > 1 && words.every((w) => n.includes(w))) return 34;
+    return 0;
+  }
+
+  function searchView(root, r) {
+    const q = r.query.get('q') || '';
+    root.appendChild(locationBar(q));
+    root.appendChild(backBar(`Results for “${q}”`));
+
+    const matches = allVenues()
+      .map((v) => ({ v, score: matchScore(v.name, q) }))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        if (a.v.source === 'seed' && b.v.source !== 'seed') return -1;
+        if (b.v.source === 'seed' && a.v.source !== 'seed') return 1;
+        if (A.location) return G.geo.haversineMiles(A.location, a.v) - G.geo.haversineMiles(A.location, b.v);
+        return 0;
+      })
+      .map((x) => decorate(x.v));
+
+    if (matches.length) {
+      root.appendChild(h('div', { class: 'list-head' }, [
+        h('span', { text: `${matches.length} water${matches.length === 1 ? '' : 's'} matching` }),
+        h('span', { class: 'muted small', text: 'anywhere in the UK' })
+      ]));
+      const list = h('div', { class: 'venue-list' });
+      matches.slice(0, 40).forEach((v) => list.appendChild(searchRow(v)));
+      root.appendChild(list);
+    } else if (!A.searching) {
+      root.appendChild(h('div', { class: 'empty' }, [
+        h('p', { text: `Nothing in the built-in list matches “${q}”.` }),
+        h('p', { class: 'muted', text: 'Try searching OpenStreetMap — it covers far more waters, though it cannot tell you whether you are allowed to fish them.' })
+      ]));
+    }
+
+    const actions = h('section', { class: 'card' });
+    actions.appendChild(h('h3', { text: 'Widen the search' }));
+    actions.appendChild(h('div', { class: 'btn-row' }, [
+      h('button', {
+        class: 'btn primary', disabled: A.searching,
+        text: A.searching ? 'Searching OpenStreetMap…' : `Search all UK waters for “${q}”`,
+        onclick: () => searchWaterByName(q)
+      }),
+      h('button', { class: 'btn', text: `Treat “${q}” as a town or place`, onclick: () => searchPlace(q) })
+    ]));
+    if (A.namedFor === q && !A.searching) {
+      const found = A.named.length;
+      actions.appendChild(h('p', { class: 'muted small', text:
+        found ? `OpenStreetMap returned ${found} named water${found === 1 ? '' : 's'} for this search — they are in the list above, marked OSM.`
+              : 'OpenStreetMap had no named water matching that. Check the spelling, or try a shorter version of the name.' }));
+    }
+    actions.appendChild(h('p', { class: 'fineprint', text:
+      'A water appearing here is not permission to fish it. Day tickets, club books and private ownership all still apply.' }));
+    root.appendChild(actions);
+  }
+
+  function searchRow(v) {
+    const row = venueRow(v);
+    /* Picking a result with no location set anchors the app there, so the licence rules,
+       forecast and distances have something to work from. */
+    row.addEventListener('click', () => {
+      if (!A.location) useLocation({ lat: v.lat, lon: v.lon, label: v.name });
+    }, true);
+    return row;
+  }
+
+  async function searchWaterByName(q) {
+    A.searching = true; render();
+    try {
+      const found = await G.geo.searchByName(q);
+      A.named = found;
+      A.namedFor = q;
+      if (!found.length) toast('No named water on OpenStreetMap matched that.', 'info');
+      else toast(`Found ${found.length} on OpenStreetMap.`, 'good');
+    } catch (e) {
+      toast('Could not reach OpenStreetMap for that search.', 'warn');
+      A.named = []; A.namedFor = q;
+    } finally {
+      A.searching = false; render();
+    }
   }
 
   function conditionsStrip() {

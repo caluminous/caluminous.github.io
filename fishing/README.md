@@ -10,8 +10,14 @@ Live at `/fishing/` on the site. The prompt it was built from is in [PROMPT.md](
 ## What it does
 
 **Finds waters near you.** Geolocation or a postcode, a radius you set, and two sources of
-venues: a hand-written seed list of well-known UK fisheries, and live discovery from
-OpenStreetMap so the app has real coverage anywhere in the country.
+venues: a hand-written seed list of 131 UK fisheries, reservoirs, rivers, canals, lochs and
+shore marks, plus live discovery from OpenStreetMap so the app has real coverage anywhere
+in the country.
+
+**Finds waters by name.** The search box takes a postcode, a town, or the name of a water —
+"Twynersh Fishery", "Bluebell Lakes", "River Wye", or just "pier". Partial names work. The
+built-in list answers instantly and nationwide; one tap widens the search to every named
+water in OpenStreetMap.
 
 **Tells you what today costs.** A "Before you cast" panel per venue that adds the rod
 licence you actually need to the venue's day ticket and gives you one number. It knows the
@@ -36,7 +42,7 @@ is actually working.
 ## The map
 
 Written from scratch — no Leaflet, no Mapbox, nothing. Drag, pinch, wheel, double-tap,
-keyboard panning, grid clustering, a radius ring, colour-coded rating pins and a preview
+keyboard panning, distance-based clustering, a radius ring, colour-coded rating pins and a preview
 sheet, all in `map.js` against raw OpenStreetMap tiles. Tiles are cached by the service
 worker so a map you've already looked at still works on the bank with no signal.
 
@@ -44,9 +50,9 @@ worker so a map you've already looked at still works on the bank with no signal.
 
 | File | What's in it |
 | --- | --- |
-| `data.js` | Licence prices and rules, close season, 30 species, 20 rig specs, seed venues |
+| `data.js` | Licence prices and rules, close season, 32 species, 20 rig specs, 131 seed venues |
 | `store.js` | localStorage state, ratings, corrections, catch log, network cache |
-| `geo.js` | Geolocation, postcodes.io, Overpass discovery, Open-Meteo, distance |
+| `geo.js` | Geolocation, postcodes.io, Overpass discovery and name search, Open-Meteo, distance |
 | `tactics.js` | Conditions, bite score, species likelihood, cost and legality |
 | `map.js` | The slippy map |
 | `ui.js` | Icons, stars, score rings, the rig diagram engine |

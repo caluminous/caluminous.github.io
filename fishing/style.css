@@ -413,6 +413,9 @@ details.card[open] > summary::after { content: '−'; }
   width: 34px; cursor: pointer;
   display: flex; flex-direction: column; align-items: center;
   transition: transform .08s ease;
+  /* Above clusters: where a pin and a count bubble overlap, tapping the actual venue
+     must win over the "zoom in to separate these" affordance. */
+  z-index: 3;
 }
 .pin-body {
   width: 34px; height: 26px; border-radius: 13px;
@@ -434,6 +437,7 @@ details.card[open] > summary::after { content: '−'; }
 
 .map-cluster {
   position: absolute; top: 0; left: 0;
+  z-index: 2;
   margin: -17px 0 0 -17px;
   width: 34px; height: 34px; border-radius: 50%;
   appearance: none; cursor: pointer;
