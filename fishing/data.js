@@ -1,0 +1,1172 @@
+/* Cast — static reference data: licences, species, rigs, baits and the seed venue list.
+
+   Provenance rules for everything in this file:
+   - Licence prices are the published Environment Agency rates and carry the date they
+     were last checked. They change every April; the app lets the angler override them.
+   - Venue day-ticket prices and ratings are INDICATIVE editorial values, not quotes and
+     not review scores. The UI must label them as such. `checked` is when the entry was
+     last looked at, not a guarantee the fishery hasn't changed its prices since.
+   - Anything the app cannot stand behind is `null`, which renders as "not recorded",
+     rather than a plausible-looking made-up number. */
+(function (G) {
+  'use strict';
+
+  /* ------------------------------------------------------------------ licences */
+
+  /* Environment Agency rod licence, England and Wales. Prices reviewed each April. */
+  const LICENCE = {
+    checked: '2026-04-01',
+    source: 'https://www.gov.uk/fishing-licences',
+    buyUrl: 'https://www.gov.uk/fishing-licences/buy-a-fishing-licence',
+    freeDayUrl: 'https://takeafriendfishing.co.uk/',
+    /* id: [label, 1-day, 8-day, annual, concession annual (66+ / disabled), junior 13-16] */
+    types: [
+      { id: 'coarse2', label: 'Trout, coarse and eel — 2 rods',
+        day: 7.30, week: 14.70, year: 36.80, concession: 24.50, junior: 0 },
+      { id: 'coarse3', label: 'Trout, coarse and eel — 3 rods',
+        day: null, week: null, year: 55.30, concession: null, junior: 0 },
+      { id: 'salmon', label: 'Salmon and sea trout',
+        day: 7.30, week: 14.70, year: 90.40, concession: null, junior: 0 }
+    ],
+    notes: [
+      'A licence is needed from age 13. Under-13s do not need one.',
+      'Anglers aged 13 to 16 fish free but must still register for a £0 licence.',
+      'One licence covers England and Wales, and the Border Esk in Scotland.',
+      'A rod licence is only permission to fish — you still need the owner’s permission for the water itself.'
+    ]
+  };
+
+  /* What the law asks for, by country. Sea fishing needs no rod licence anywhere in GB. */
+  const REGIONS = {
+    England: {
+      licence: 'ea',
+      body: 'Environment Agency',
+      riverCloseSeason: true,
+      note: 'EA rod licence required for freshwater fishing from age 13.'
+    },
+    Wales: {
+      licence: 'ea',
+      body: 'Natural Resources Wales / Environment Agency',
+      riverCloseSeason: true,
+      note: 'The EA rod licence covers Wales. Some Welsh rivers carry extra byelaws for salmon and sea trout.'
+    },
+    Scotland: {
+      licence: 'none',
+      body: 'District Salmon Fishery Boards',
+      riverCloseSeason: false,
+      note: 'No rod licence exists in Scotland for coarse fish or trout — but you always need the owner’s permission, ' +
+            'and fishing for salmon or sea trout without written permission is a criminal offence.'
+    },
+    'Northern Ireland': {
+      licence: 'ni',
+      body: 'DAERA / Loughs Agency',
+      riverCloseSeason: false,
+      note: 'Northern Ireland needs both a rod licence (DAERA or Loughs Agency, depending on the water) ' +
+            'and a separate fishing permit. Prices are set separately from the EA — check before you travel.'
+    }
+  };
+
+  /* Statutory coarse close season, England and Wales: 15 March to 15 June inclusive,
+     on rivers, streams and drains. Most stillwaters and many canals are exempt. */
+  const CLOSE_SEASON = {
+    startMonth: 3, startDay: 15,
+    endMonth: 6, endDay: 15,
+    appliesTo: ['river'],
+    label: '15 March – 15 June',
+    note: 'Statutory coarse close season on rivers, streams and drains in England and Wales. ' +
+          'Stillwaters and most canals stay open, but individual fisheries can set their own closures.'
+  };
+
+  /* ---------------------------------------------------------------------- rigs */
+
+  /* Rigs are described as components on a line, not drawn by hand. `p` is the position
+     along the line from rod (0) to hook (1); the renderer in ui.js turns this into SVG.
+     Keeping one vocabulary means every diagram in the app reads the same way. */
+  const RIG_PARTS = ['line', 'float', 'shot', 'stop', 'bead', 'swivel', 'lead', 'feeder',
+                     'sleeve', 'hook', 'bait', 'boom', 'blade', 'fly', 'clip'];
+
+  const rig = (id, name, style, use, parts, tips) => ({ id, name, style, use, parts, tips });
+
+  const RIGS = [
+    rig('hair-bolt', 'Hair rig on a running lead', 'ledger',
+      'The default carp presentation: the fish takes the bait, feels the lead, and hooks itself.',
+      [
+        { t: 'lead', p: 0.58, label: '2–3 oz running lead' },
+        { t: 'bead', p: 0.66, label: 'Rubber shock bead' },
+        { t: 'swivel', p: 0.70, label: 'Quick-change swivel' },
+        { t: 'sleeve', p: 0.76, label: '20 cm coated braid hooklink' },
+        { t: 'hook', p: 0.93, label: 'Size 8–4 wide gape' },
+        { t: 'bait', p: 1.0, label: 'Boilie on a hair' }
+      ],
+      ['Leave the hair long enough that the bait sits a few millimetres clear of the hook bend.',
+       'The lead must run free — if a carp snaps you off, the fish has to be able to shed it.']),
+
+    rig('method', 'Method feeder', 'ledger',
+      'Bait and feed land as one parcel. Hard to beat on commercial stillwaters.',
+      [
+        { t: 'feeder', p: 0.62, label: 'Flatbed method feeder, 30–45 g' },
+        { t: 'swivel', p: 0.72, label: 'Quick-change bead' },
+        { t: 'sleeve', p: 0.78, label: '10–15 cm hooklength' },
+        { t: 'hook', p: 0.94, label: 'Size 14–10 barbless' },
+        { t: 'bait', p: 1.0, label: 'Banded pellet or corn' }
+      ],
+      ['Short hooklink is the whole point — 10 cm hooks fish, 30 cm does not.',
+       'Mould the groundbait damp enough to survive the cast and no damper.']),
+
+    rig('maggot-feeder', 'Groundbait or maggot feeder', 'ledger',
+      'Puts a steady trickle of feed exactly where the hookbait is. Bream and skimmers.',
+      [
+        { t: 'feeder', p: 0.60, label: 'Cage or open-end feeder' },
+        { t: 'swivel', p: 0.70, label: 'Link swivel' },
+        { t: 'sleeve', p: 0.78, label: '60–90 cm hooklength' },
+        { t: 'hook', p: 0.94, label: 'Size 16–12' },
+        { t: 'bait', p: 1.0, label: 'Double maggot or worm tip' }
+      ],
+      ['Cast to the same spot every time — clip up on the reel and pick a far-bank marker.',
+       'Lengthen the hooklink when bites dry up; shorten it when they come fast.']),
+
+    rig('helicopter', 'Helicopter feeder rig', 'ledger',
+      'Hooklink spins clear of the feeder in flight, so it tangles far less at range.',
+      [
+        { t: 'feeder', p: 0.55, label: 'Inline feeder' },
+        { t: 'bead', p: 0.63, label: 'Top stop bead' },
+        { t: 'swivel', p: 0.67, label: 'Hooklink swivel on the leader' },
+        { t: 'bead', p: 0.71, label: 'Bottom stop bead' },
+        { t: 'sleeve', p: 0.80, label: 'Hooklength' },
+        { t: 'hook', p: 0.94, label: 'Size 14–10' },
+        { t: 'bait', p: 1.0, label: 'Pellet, corn or worm' }
+      ],
+      ['Set the stop beads so the hooklink can rotate freely between them.',
+       'The go-to when a straight feeder rig keeps coming back in a birds nest.']),
+
+    rig('running-ledger', 'Running ledger', 'ledger',
+      'Simple, sensitive, and the right answer on rivers. Chub, barbel, flounder.',
+      [
+        { t: 'lead', p: 0.55, label: 'Running lead or feeder on a link' },
+        { t: 'bead', p: 0.64, label: 'Buffer bead' },
+        { t: 'swivel', p: 0.68, label: 'Swivel' },
+        { t: 'sleeve', p: 0.78, label: '45–90 cm hooklength' },
+        { t: 'hook', p: 0.94, label: 'Size 12–6' },
+        { t: 'bait', p: 1.0, label: 'Meat, bread, pellet or worm' }
+      ],
+      ['Use just enough lead to hold bottom and no more — feel the rig settle, then set the rod down.',
+       'In coloured water, fish it tight to the near bank rather than casting across.']),
+
+    rig('paternoster', 'Running paternoster', 'ledger',
+      'Holds a live or dead bait just off the bottom. Perch, zander and estuary fish.',
+      [
+        { t: 'swivel', p: 0.52, label: 'Three-way swivel' },
+        { t: 'lead', p: 0.72, label: 'Lead on a weak dropper link' },
+        { t: 'boom', p: 0.62, label: '30 cm hook link off the swivel' },
+        { t: 'hook', p: 0.88, label: 'Size 8–4 or a small treble' },
+        { t: 'bait', p: 0.96, label: 'Small deadbait or lobworm' }
+      ],
+      ['Make the lead link the weakest part of the rig so a snag costs you a lead, not the fish.',
+       'For zander, fish it at dusk and give slack line before striking.']),
+
+    rig('zig', 'Zig rig', 'ledger',
+      'Presents a tiny buoyant bait in mid-water, where carp actually sit in warm weather.',
+      [
+        { t: 'lead', p: 0.30, label: 'Lead on the deck' },
+        { t: 'swivel', p: 0.34, label: 'Swivel' },
+        { t: 'sleeve', p: 0.60, label: 'Long zig hooklink, set to depth' },
+        { t: 'hook', p: 0.92, label: 'Size 12–10 wide gape' },
+        { t: 'bait', p: 1.0, label: 'Foam or a zig bug' }
+      ],
+      ['Start at two-thirds of the way up the water column and adjust from there.',
+       'Best from late spring through summer, and useless in cold water.']),
+
+    rig('surface-controller', 'Surface controller', 'float',
+      'Floating bait at range for carp and rudd feeding on top.',
+      [
+        { t: 'float', p: 0.30, label: 'Controller float' },
+        { t: 'swivel', p: 0.40, label: 'Swivel' },
+        { t: 'sleeve', p: 0.60, label: '1–1.5 m clear mono hooklink' },
+        { t: 'hook', p: 0.92, label: 'Size 10–8' },
+        { t: 'bait', p: 1.0, label: 'Floating pellet, crust or dog biscuit' }
+      ],
+      ['Sink the line between float and rod tip or the fish will spook off it.',
+       'Feed a dozen free offerings and wait for confident takes before you cast.']),
+
+    rig('waggler', 'Waggler float', 'float',
+      'The all-rounder for stillwaters and slow rivers, fished at range.',
+      [
+        { t: 'float', p: 0.12, label: 'Insert waggler, locked with shot' },
+        { t: 'shot', p: 0.14, label: 'Bulk locking shot' },
+        { t: 'shot', p: 0.58, label: 'No.8 dropper shot' },
+        { t: 'shot', p: 0.76, label: 'No.10 tell-tale shot' },
+        { t: 'hook', p: 0.93, label: 'Size 20–14' },
+        { t: 'bait', p: 1.0, label: 'Maggot, caster or corn' }
+      ],
+      ['Set it dead depth first, then shallow up until you find the fish.',
+       'Two thirds of the shot goes round the float — the rest is for presentation.']),
+
+    rig('stick', 'Stick float / trotting', 'float',
+      'Running water, bait moving at the pace of the current. Roach, dace, chub, grayling.',
+      [
+        { t: 'float', p: 0.10, label: 'Stick float, double rubber' },
+        { t: 'shot', p: 0.36, label: 'Shirt-button No.6s' },
+        { t: 'shot', p: 0.56, label: 'No.8' },
+        { t: 'shot', p: 0.74, label: 'No.10' },
+        { t: 'hook', p: 0.93, label: 'Size 20–16' },
+        { t: 'bait', p: 1.0, label: 'Single or double maggot' }
+      ],
+      ['Hold the float back hard every few yards — the bait lifts and that is when it goes under.',
+       'Feed a small pinch of maggots every single cast to hold the shoal in the swim.']),
+
+    rig('pole-rig', 'Pole rig', 'float',
+      'Total control over a short line. Unbeatable for small fish and canal work.',
+      [
+        { t: 'float', p: 0.14, label: '0.2–0.5 g pole float' },
+        { t: 'shot', p: 0.44, label: 'Bulk olivette' },
+        { t: 'shot', p: 0.70, label: 'Two No.10 droppers' },
+        { t: 'hook', p: 0.93, label: 'Size 22–16' },
+        { t: 'bait', p: 1.0, label: 'Pinkie, maggot or punch' }
+      ],
+      ['Match the elastic to the fish, not the float — too stiff and you bump them off.',
+       'Ship out, lower the rig in, and only then start feeding.']),
+
+    rig('lift', 'Lift method', 'float',
+      'Bite indication by the float rising. Deadly for tench and crucians in the margins.',
+      [
+        { t: 'float', p: 0.14, label: 'Peacock quill, bottom-end only' },
+        { t: 'shot', p: 0.80, label: 'Single AAA shot 5 cm from the hook' },
+        { t: 'hook', p: 0.93, label: 'Size 16–12' },
+        { t: 'bait', p: 1.0, label: 'Worm, corn or bread' }
+      ],
+      ['Over-depth by a few centimetres and tighten until the float cocks.',
+       'If the float lifts and lies flat, strike — that fish already has the bait.']),
+
+    rig('pike-float-deadbait', 'Float-legered deadbait', 'float',
+      'The safest, most effective way to present a deadbait for pike.',
+      [
+        { t: 'float', p: 0.14, label: 'Sliding pike float' },
+        { t: 'bead', p: 0.34, label: 'Bead' },
+        { t: 'lead', p: 0.42, label: '20–30 g running lead' },
+        { t: 'swivel', p: 0.50, label: 'Swivel' },
+        { t: 'sleeve', p: 0.66, label: '45 cm, 28 lb wire trace' },
+        { t: 'hook', p: 0.88, label: 'Two size 6 semi-barbless trebles' },
+        { t: 'bait', p: 1.0, label: 'Smelt, sardine or mackerel tail' }
+      ],
+      ['Wire trace every single time. Mono is how pike get left with hooks in them.',
+       'Strike as soon as the float goes — never let a pike run and swallow the bait.',
+       'On the bank before you cast: unhooking mat, long forceps, wire cutters. No kit, no fishing.']),
+
+    rig('pike-lure', 'Lure on a wire trace', 'lure',
+      'Cover water and find the active fish. Pike, perch and pollack.',
+      [
+        { t: 'clip', p: 0.40, label: 'Snap link' },
+        { t: 'sleeve', p: 0.56, label: '30 cm, 20–28 lb wire or fluoro trace' },
+        { t: 'swivel', p: 0.70, label: 'Swivel to kill line twist' },
+        { t: 'blade', p: 0.92, label: 'Spinner, spoon or shallow crank' }
+      ],
+      ['Vary the retrieve until something takes — steady, then twitch, then pause.',
+       'Barbless or crushed-barb trebles come out in seconds and save fish.']),
+
+    rig('dropshot', 'Drop shot', 'lure',
+      'Bait hovers above the weight and stays in the strike zone with no movement at all.',
+      [
+        { t: 'hook', p: 0.62, label: 'Size 4–1 drop shot hook, palomar knot' },
+        { t: 'bait', p: 0.68, label: 'Small soft plastic, nose-hooked' },
+        { t: 'lead', p: 1.0, label: '5–15 g drop shot weight' }
+      ],
+      ['Set the tag 20–40 cm long: that is how high off the bottom the lure sits.',
+       'Shake the rod tip while the weight stays put — that quiver is what triggers perch.']),
+
+    rig('fly-dry', 'Dry fly leader', 'lure',
+      'Floating line, tapered leader, fly on the surface. Trout and grayling.',
+      [
+        { t: 'line', p: 0.30, label: 'Floating fly line' },
+        { t: 'sleeve', p: 0.60, label: '9 ft tapered leader' },
+        { t: 'sleeve', p: 0.80, label: '2–3 ft tippet, 3–5 lb' },
+        { t: 'fly', p: 1.0, label: 'Dry fly matched to the hatch' }
+      ],
+      ['Degrease the tippet so it sinks and stops leaving a wake.',
+       'Cast above the fish and let the fly come to it — never line a rising trout.']),
+
+    rig('fly-nymph', 'Nymph / duo', 'lure',
+      'A dry fly as the indicator with a nymph hung below it. Covers both layers at once.',
+      [
+        { t: 'line', p: 0.26, label: 'Floating fly line' },
+        { t: 'sleeve', p: 0.52, label: '9 ft tapered leader' },
+        { t: 'fly', p: 0.68, label: 'Buoyant dry as the indicator' },
+        { t: 'sleeve', p: 0.84, label: '60–120 cm dropper' },
+        { t: 'fly', p: 1.0, label: 'Weighted nymph' }
+      ],
+      ['Set the dropper to roughly one and a half times the water depth in fast runs.',
+       'Any hesitation of the dry is a take — lift, do not strike hard.']),
+
+    rig('pulley', 'Pulley rig', 'ledger',
+      'Sea rig for rough ground: the lead lifts on the retrieve and rides clear of snags.',
+      [
+        { t: 'clip', p: 0.40, label: 'Rig body with pulley bead' },
+        { t: 'lead', p: 0.62, label: 'Grip lead on a weak link' },
+        { t: 'sleeve', p: 0.72, label: '60 cm 60 lb rig body' },
+        { t: 'hook', p: 0.92, label: 'Size 4/0–6/0 pennell' },
+        { t: 'bait', p: 1.0, label: 'Lugworm and squid wrap' }
+      ],
+      ['Use a rotten-bottom link on the lead so a snagged weight breaks free, not your rig.',
+       'Cod and conger over broken ground — the rig that stops you losing everything.']),
+
+    rig('flapper', 'Two-hook flapper', 'ledger',
+      'Two baits, two chances. The standard beach rig for whiting, dabs and dogfish.',
+      [
+        { t: 'clip', p: 0.36, label: 'Rig body' },
+        { t: 'boom', p: 0.52, label: 'Upper snood, 25 cm' },
+        { t: 'boom', p: 0.68, label: 'Lower snood, 25 cm' },
+        { t: 'lead', p: 0.82, label: '4–6 oz grip lead' },
+        { t: 'hook', p: 0.94, label: 'Two size 1–2/0 Aberdeens' },
+        { t: 'bait', p: 1.0, label: 'Ragworm, squid or mackerel strip' }
+      ],
+      ['Short casts only — flappers fly badly. Clip down if you need distance.',
+       'Leave it 10 minutes between casts; whiting find bait fast, dabs do not.']),
+
+    rig('sea-float', 'Sliding sea float', 'float',
+      'Mackerel, garfish and mullet off piers, rocks and harbour walls.',
+      [
+        { t: 'stop', p: 0.10, label: 'Sliding stop knot, set to depth' },
+        { t: 'float', p: 0.22, label: 'Sliding float' },
+        { t: 'bead', p: 0.32, label: 'Bead' },
+        { t: 'shot', p: 0.44, label: 'Drilled bullet to cock the float' },
+        { t: 'swivel', p: 0.56, label: 'Swivel' },
+        { t: 'hook', p: 0.92, label: 'Size 4–1 for mackerel, 8–10 for mullet' },
+        { t: 'bait', p: 1.0, label: 'Mackerel strip, ragworm or bread' }
+      ],
+      ['Set shallow for mackerel — 4 to 6 feet is usually plenty.',
+       'For mullet, scale everything down and expect to be ignored for an hour first.'])
+  ];
+
+  /* ------------------------------------------------------------------- species */
+
+  /* season: 12 characters, Jan → Dec. 0 off, 1 possible, 2 good, 3 prime.
+     temp:   [too cold below, comfortable from, comfortable to, too warm above] in °C.
+     times:  {dawn, day, dusk, night} each 0–3.
+     Water temperature is not measured — air temperature is used as a proxy and the
+     engine says so rather than pretending to know what the water is doing. */
+  const sp = (o) => o;
+
+  const SPECIES = [
+    sp({ id: 'carp', name: 'Carp', latin: 'Cyprinus carpio', group: 'coarse',
+      waters: ['stillwater', 'canal', 'river', 'reservoir'],
+      season: '112233333211', temp: [5, 14, 24, 30],
+      times: { dawn: 3, day: 2, dusk: 3, night: 3 },
+      rigs: ['hair-bolt', 'method', 'zig', 'surface-controller'],
+      hook: 'Size 10–4', mainline: '12–15 lb', hooklength: '10–15 lb coated braid',
+      baits: [
+        ['Boilies, 15–18 mm', 'Selective and they survive nuisance fish all night.'],
+        ['Sweetcorn', 'Cheap, visible and carp of every size eat it.'],
+        ['Pellets in a bait band', 'The banker on any commercial water.']
+      ],
+      depth: 'Find the features — margins, overhanging trees, gravel bars, the back of an island.',
+      how: 'Bait a tight spot and stay off it. Carp settle far faster than most anglers wait.',
+      cold: 'Below about 8 °C drop to a single bright bait and one small handful of feed.',
+      warm: 'In a warm spell go up in the water — zigs or floaters beat anything on the bottom.' }),
+
+    sp({ id: 'crucian', name: 'Crucian carp', latin: 'Carassius carassius', group: 'coarse',
+      waters: ['stillwater'],
+      season: '001233332100', temp: [8, 15, 24, 28],
+      times: { dawn: 3, day: 2, dusk: 3, night: 1 },
+      rigs: ['lift', 'pole-rig', 'waggler'],
+      hook: 'Size 18–14', mainline: '4 lb', hooklength: '2.5–3 lb',
+      baits: [
+        ['Sweetcorn', 'Single grain on a size 14 — the classic crucian bait.'],
+        ['Paste over a maggot', 'Soft enough for their fussy, lip-only bites.'],
+        ['Double red maggot', 'When they will not touch anything bigger.']
+      ],
+      depth: 'Shallow silty margins, 2–4 ft, tight to reeds or lilies.',
+      how: 'Bites are maddening. Wait for the float to lift and lie flat, not for it to go under.',
+      cold: 'Barely feed at all under 10 °C — a genuinely warm-weather fish.',
+      warm: 'First and last light in high summer are the two windows worth having.' }),
+
+    sp({ id: 'tench', name: 'Tench', latin: 'Tinca tinca', group: 'coarse',
+      waters: ['stillwater', 'canal', 'reservoir'],
+      season: '001233332100', temp: [8, 14, 22, 27],
+      times: { dawn: 3, day: 1, dusk: 2, night: 2 },
+      rigs: ['lift', 'method', 'maggot-feeder'],
+      hook: 'Size 14–10', mainline: '6–8 lb', hooklength: '5–6 lb',
+      baits: [
+        ['Lobworm', 'Tench will move a long way for a big worm.'],
+        ['Sweetcorn', 'Three grains on a size 12, over a bed of the same.'],
+        ['Casters over hemp', 'The classic estate-lake approach.']
+      ],
+      depth: 'Silty margins and the edge of weedbeds, 3–6 ft.',
+      how: 'Look for pin-prick bubbles at dawn — that is feeding tench, and it is a short window.',
+      cold: 'Effectively a May-to-July fish. Out of that band, expect nothing.',
+      warm: 'Be set up before it is light. By 9 am on a bright day it is usually over.' }),
+
+    sp({ id: 'bream', name: 'Bream', latin: 'Abramis brama', group: 'coarse',
+      waters: ['stillwater', 'river', 'canal', 'reservoir'],
+      season: '112333332211', temp: [6, 13, 23, 28],
+      times: { dawn: 3, day: 1, dusk: 3, night: 3 },
+      rigs: ['maggot-feeder', 'helicopter', 'method'],
+      hook: 'Size 16–10', mainline: '6 lb', hooklength: '4–5 lb',
+      baits: [
+        ['Worm and caster cocktail', 'Nothing sorts out big bream faster.'],
+        ['Maggots over groundbait', 'Reliable when a shoal has moved in.'],
+        ['Sweetcorn', 'Beats the small fish when maggots get shredded.']
+      ],
+      depth: 'Deepest flat area you can find, often well out.',
+      how: 'Bream come in shoals and leave together. Feed heavily once you get the first bite.',
+      cold: 'Slow to feed cold, but a mild grey winter day can still produce a net of them.',
+      warm: 'Overnight and dawn. Rolling fish at first light tells you exactly where to cast.' }),
+
+    sp({ id: 'roach', name: 'Roach', latin: 'Rutilus rutilus', group: 'coarse',
+      waters: ['river', 'canal', 'stillwater', 'reservoir'],
+      season: '222222223333', temp: [2, 8, 20, 26],
+      times: { dawn: 2, day: 2, dusk: 3, night: 1 },
+      rigs: ['stick', 'waggler', 'pole-rig'],
+      hook: 'Size 22–16', mainline: '3 lb', hooklength: '1.5–2 lb',
+      baits: [
+        ['Bread punch', 'Devastating on cold, clear canals and rivers.'],
+        ['Single maggot', 'The default, and it catches everywhere.'],
+        ['Casters over hemp', 'Sorts the better fish out of a shoal of tiddlers.']
+      ],
+      depth: 'Mid-water to just off bottom — they rarely sit hard on the deck.',
+      how: 'Little and often. A pinch of feed every cast keeps the shoal competing.',
+      cold: 'One of the few that genuinely feed all winter — often best in the cold.',
+      warm: 'Last hour of light in summer, when the small stuff finally backs off.' }),
+
+    sp({ id: 'rudd', name: 'Rudd', latin: 'Scardinius erythrophthalmus', group: 'coarse',
+      waters: ['stillwater', 'canal', 'reservoir'],
+      season: '001223332100', temp: [8, 14, 24, 29],
+      times: { dawn: 2, day: 2, dusk: 3, night: 0 },
+      rigs: ['waggler', 'pole-rig', 'surface-controller'],
+      hook: 'Size 18–14', mainline: '3 lb', hooklength: '2 lb',
+      baits: [
+        ['Floating bread', 'Rudd feed up — fish on top and you will find them.'],
+        ['Maggot fished shallow', 'Set 30 cm deep and expect instant bites.'],
+        ['Casters', 'For the better fish once small ones take over.']
+      ],
+      depth: 'Top 60 cm of the water. Fishing on the bottom for rudd is a wasted day.',
+      how: 'Catapult a few floaters out and watch for the swirls before you cast.',
+      cold: 'Almost dormant in cold water — leave them until May.',
+      warm: 'Hot, still evenings are prime.' }),
+
+    sp({ id: 'perch', name: 'Perch', latin: 'Perca fluviatilis', group: 'predator',
+      waters: ['river', 'canal', 'stillwater', 'reservoir'],
+      season: '332211123333', temp: [3, 8, 20, 25],
+      times: { dawn: 3, day: 2, dusk: 3, night: 0 },
+      rigs: ['dropshot', 'paternoster', 'waggler', 'pike-lure'],
+      hook: 'Size 12–4', mainline: '6–8 lb', hooklength: '5–6 lb fluorocarbon',
+      baits: [
+        ['Lobworm', 'Still the best perch bait there has ever been.'],
+        ['Small soft plastic on a drop shot', 'Covers water and picks off the aggressive ones.'],
+        ['Prawn', 'Underrated, and big perch love it.']
+      ],
+      depth: 'Structure: bridges, moored boats, lock gates, overhanging trees, marina corners.',
+      how: 'Perch hunt in packs. Catch one, cast straight back — there are usually more.',
+      cold: 'Winter is prime. Cold, clear water and a bright day suits them fine.',
+      warm: 'Dawn and dusk in summer; through the day they go deep and sulk.' }),
+
+    sp({ id: 'pike', name: 'Pike', latin: 'Esox lucius', group: 'predator',
+      waters: ['river', 'canal', 'stillwater', 'reservoir'],
+      season: '333211112333', temp: [1, 4, 16, 22],
+      times: { dawn: 3, day: 2, dusk: 3, night: 0 },
+      rigs: ['pike-float-deadbait', 'pike-lure', 'paternoster'],
+      hook: 'Two size 6 semi-barbless trebles', mainline: '15–20 lb', hooklength: '28 lb wire trace',
+      baits: [
+        ['Smelt or sardine deadbait', 'Oily, smelly and pike home in on them.'],
+        ['Mackerel tail', 'Tough enough to stay on and cast a long way.'],
+        ['Big soft plastic or spoon', 'When you want to walk and find fish.']
+      ],
+      depth: 'Ambush points — weedbed edges, drop-offs, slack water beside a main flow.',
+      how: 'Two rods if the rules allow: one deadbait sitting still, one working lures.',
+      cold: 'Cold water is pike weather. October to March is the season that matters.',
+      warm: 'Do not fish for pike in warm water — they fight to exhaustion and die. Leave them.',
+      warning: 'Wire trace, unhooking mat, 12" forceps and wire cutters are mandatory, not optional. ' +
+               'If you are not equipped to unhook a pike, do not fish for one.' }),
+
+    sp({ id: 'zander', name: 'Zander', latin: 'Sander lucioperca', group: 'predator',
+      waters: ['river', 'canal'],
+      season: '332111112233', temp: [2, 6, 18, 24],
+      times: { dawn: 2, day: 0, dusk: 3, night: 3 },
+      rigs: ['paternoster', 'dropshot', 'pike-lure'],
+      hook: 'Size 6 treble or 2/0 single', mainline: '12 lb', hooklength: '20 lb wire or 15 lb fluoro',
+      baits: [
+        ['Small roach or smelt deadbait', 'Match the size — zander want a small mouthful.'],
+        ['Soft plastic shad on a jig head', 'Bounced along the bottom at last light.'],
+        ['Lamprey section', 'Blood in the water and they find it in the dark.']
+      ],
+      depth: 'Deep water and low light. Boat channels, lock approaches, bridge shadows.',
+      how: 'Bites are gentle. Drop the rod tip, let them turn, then lift into it steadily.',
+      cold: 'Feed hard through winter, especially in coloured water.',
+      warm: 'A dusk-and-after fish in summer — daylight sessions are largely wasted.',
+      warning: 'Non-native in most of the UK. Check the fishery rules on returning them before you go.' }),
+
+    sp({ id: 'chub', name: 'Chub', latin: 'Squalius cephalus', group: 'coarse',
+      waters: ['river'],
+      season: '332000223333', temp: [2, 8, 20, 25],
+      times: { dawn: 2, day: 2, dusk: 3, night: 2 },
+      rigs: ['running-ledger', 'stick', 'surface-controller'],
+      hook: 'Size 10–6', mainline: '6–8 lb', hooklength: '5–6 lb',
+      baits: [
+        ['Bread flake', 'A big lump of it, on a size 6, is a proper chub bait.'],
+        ['Cheesepaste', 'The winter classic in cold, coloured water.'],
+        ['Lobworm', 'After rain, when the river is carrying colour.']
+      ],
+      depth: 'Under cover. Overhanging trees, undercut banks, rafts of rubbish.',
+      how: 'Move every 20 minutes. Chub are where the cover is, not where you are comfortable.',
+      cold: 'Winter floodwater is the best chub fishing of the year. Fish the slacks.',
+      warm: 'Try floating crust in summer — they are suckers for it.' }),
+
+    sp({ id: 'barbel', name: 'Barbel', latin: 'Barbus barbus', group: 'coarse',
+      waters: ['river'],
+      season: '110000333332', temp: [7, 12, 22, 26],
+      times: { dawn: 2, day: 1, dusk: 3, night: 3 },
+      rigs: ['running-ledger', 'hair-bolt', 'maggot-feeder'],
+      hook: 'Size 12–6', mainline: '10–12 lb', hooklength: '8–10 lb',
+      baits: [
+        ['Halibut pellet on a hair', 'The bait that changed barbel fishing.'],
+        ['Luncheon meat', 'Cheap, tough, and big fish still fall for it.'],
+        ['Boilie over hemp', 'Keeps the small stuff off overnight.']
+      ],
+      depth: 'Fast, oxygenated water over gravel. Weir pools and streamy runs.',
+      how: 'Bait a swim, rest it, come back. Rod tip round and hold on.',
+      cold: 'Hard going below 8 °C. Late summer through autumn is the real season.',
+      warm: 'Dusk and into dark. In hot weather fish the well-oxygenated water below weirs.',
+      warning: 'Rest a barbel upright in the flow until it kicks off strongly. They die from bad returns.' }),
+
+    sp({ id: 'dace', name: 'Dace', latin: 'Leuciscus leuciscus', group: 'coarse',
+      waters: ['river'],
+      season: '332000112333', temp: [2, 7, 18, 23],
+      times: { dawn: 1, day: 3, dusk: 2, night: 0 },
+      rigs: ['stick', 'waggler'],
+      hook: 'Size 22–18', mainline: '2.5 lb', hooklength: '1.5 lb',
+      baits: [
+        ['Single maggot', 'Nothing else needed.'],
+        ['Caster', 'For the better stamp of fish.'],
+        ['Bread punch', 'On clear, cold winter days.']
+      ],
+      depth: 'Shallow, fast, gravelly runs — often only 18 inches deep.',
+      how: 'The fastest bite in freshwater. Strike as the float dips, not after.',
+      cold: 'Feed happily in cold water and save many a blank winter day.',
+      warm: 'Everywhere in summer, but the small ones dominate.' }),
+
+    sp({ id: 'gudgeon', name: 'Gudgeon', latin: 'Gobio gobio', group: 'coarse',
+      waters: ['river', 'canal'],
+      season: '112233333221', temp: [4, 10, 22, 27],
+      times: { dawn: 1, day: 3, dusk: 1, night: 0 },
+      rigs: ['pole-rig', 'stick'],
+      hook: 'Size 22–18', mainline: '2 lb', hooklength: '1 lb',
+      baits: [
+        ['Single red maggot', 'On the bottom, and they will find it.'],
+        ['Pinkie', 'For a fast bite-a-chuck session.'],
+        ['Squatt', 'Traditional gudgeon bait, still works.']
+      ],
+      depth: 'Hard on the bottom, in shallow gravelly water.',
+      how: 'Stir the bottom up with the pole tip — gudgeon come to the disturbance.',
+      cold: 'Feed all year, and they save blanks.',
+      warm: 'Reliable — the fish to put a beginner on.' }),
+
+    sp({ id: 'eel', name: 'Eel', latin: 'Anguilla anguilla', group: 'coarse',
+      waters: ['stillwater', 'river', 'canal'],
+      season: '000112332100', temp: [10, 15, 24, 28],
+      times: { dawn: 1, day: 0, dusk: 3, night: 3 },
+      rigs: ['running-ledger', 'paternoster'],
+      hook: 'Size 6–2 wide gape', mainline: '12 lb', hooklength: '15 lb braid',
+      baits: [
+        ['Lobworm bunch', 'Classic and it out-fishes everything else.'],
+        ['Small roach deadbait', 'Selects the bigger eels.'],
+        ['Dead prawn', 'A good alternative on hot, still nights.']
+      ],
+      depth: 'Bottom, in silt, near cover. Warm still nights after rain.',
+      how: 'Fish a slack line and a bobbin. Strike early — a deep-hooked eel rarely survives.',
+      cold: 'Nothing doing below about 12 °C.',
+      warm: 'Muggy, thundery summer nights are the whole season.',
+      warning: 'The European eel is critically endangered. Barbless, strike early, return every one, ' +
+               'and never keep one in a net.' }),
+
+    sp({ id: 'catfish', name: 'Wels catfish', latin: 'Silurus glanis', group: 'predator',
+      waters: ['stillwater'],
+      season: '000123332100', temp: [12, 18, 27, 32],
+      times: { dawn: 1, day: 1, dusk: 3, night: 3 },
+      rigs: ['hair-bolt', 'paternoster'],
+      hook: 'Size 2–6/0', mainline: '50–80 lb braid', hooklength: '80 lb',
+      baits: [
+        ['Halibut pellet or squid', 'Oily and it carries a long way in the dark.'],
+        ['Large deadbait', 'Fished on the bottom near snags.'],
+        ['Worm bunch', 'Surprisingly good for smaller cats.']
+      ],
+      depth: 'Snags, deep margins, and anywhere with cover. They patrol at night.',
+      how: 'Heavy gear and a strong landing mat. Nothing about catfish is light tackle.',
+      cold: 'Only fish for them once the water is properly warm.',
+      warm: 'Hot summer nights, and be ready for a fight that lasts.',
+      warning: 'Specialist waters only, with the right kit. A big cat will break normal carp tackle.' }),
+
+    sp({ id: 'grayling', name: 'Grayling', latin: 'Thymallus thymallus', group: 'game',
+      waters: ['river'],
+      season: '332000001233', temp: [1, 4, 14, 19],
+      times: { dawn: 1, day: 3, dusk: 2, night: 0 },
+      rigs: ['stick', 'fly-nymph'],
+      hook: 'Size 18–14', mainline: '3 lb', hooklength: '2–3 lb',
+      baits: [
+        ['Double maggot trotted', 'Down a clean gravel run, over loose feed.'],
+        ['Heavy tungsten nymph', 'Czech-nymphed through the deeper glides.'],
+        ['Red worm', 'When the river is carrying extra water.']
+      ],
+      depth: 'Fast, clean gravel runs, 2–4 ft deep.',
+      how: 'Trot the same line repeatedly and feed steadily — grayling shoal tightly.',
+      cold: 'A genuine winter fish and at their best on frosty, bright days.',
+      warm: 'Leave them alone in warm water — they are fragile and stress badly.',
+      warning: 'Grayling are a game fish: check the local season and byelaws before fishing.' }),
+
+    sp({ id: 'brown-trout', name: 'Brown trout', latin: 'Salmo trutta', group: 'game',
+      waters: ['river', 'stillwater', 'reservoir'],
+      season: '000233333100', temp: [4, 8, 17, 21],
+      times: { dawn: 3, day: 2, dusk: 3, night: 0 },
+      rigs: ['fly-dry', 'fly-nymph'],
+      hook: 'Size 18–12 fly', mainline: 'AFTM 4–6 floating', hooklength: '3–5 lb tippet',
+      baits: [
+        ['Dry fly to match the hatch', 'Watch the water for five minutes before you tie anything on.'],
+        ['Weighted nymph', 'Covers fish that are not showing.'],
+        ['Klinkhamer', 'The compromise when you cannot work out what is hatching.']
+      ],
+      depth: 'Feeding lies — seams, the crease beside fast water, under trees.',
+      how: 'Approach from downstream, keep low, and make the first cast count.',
+      cold: 'Season is generally closed in winter. Check local dates.',
+      warm: 'Evening rise on a warm day is the best hour of the year.',
+      warning: 'River trout seasons vary by region — confirm before you fish.' }),
+
+    sp({ id: 'rainbow-trout', name: 'Rainbow trout', latin: 'Oncorhynchus mykiss', group: 'game',
+      waters: ['stillwater', 'reservoir'],
+      season: '223333322333', temp: [3, 7, 17, 21],
+      times: { dawn: 3, day: 2, dusk: 3, night: 0 },
+      rigs: ['fly-nymph', 'fly-dry'],
+      hook: 'Size 14–8 fly', mainline: 'AFTM 6–7', hooklength: '6–8 lb fluorocarbon',
+      baits: [
+        ['Buzzers under an indicator', 'The stillwater banker most of the year.'],
+        ['Damsel nymph', 'Summer, retrieved slowly near weed.'],
+        ['Bright lure (Cats Whisker)', 'For recently stocked fish and coloured water.']
+      ],
+      depth: 'Count the line down and note what depth produced the take — then repeat it.',
+      how: 'Vary the retrieve until something works, then do exactly that again.',
+      cold: 'Fish deep and slow. Stocked waters fish all winter.',
+      warm: 'Early and late — they go deep in the heat of the day.' }),
+
+    sp({ id: 'salmon', name: 'Atlantic salmon', latin: 'Salmo salar', group: 'game',
+      waters: ['river'],
+      season: '011223333210', temp: [4, 7, 16, 19],
+      times: { dawn: 3, day: 2, dusk: 3, night: 0 },
+      rigs: ['fly-dry', 'pike-lure'],
+      hook: 'Size 10–4 double or tube', mainline: 'AFTM 8–10 / 15 lb', hooklength: '12–20 lb',
+      baits: [
+        ['Small tube fly', 'Fished across and down on a floating line.'],
+        ['Cascade or Willie Gunn', 'Two patterns that have earned their place.'],
+        ['Flying C spinner', 'Where the beat rules allow it.']
+      ],
+      depth: 'Known lies — the head and tail of pools. A ghillie will save you a season of guessing.',
+      how: 'Cast across, let it swing, take a step down. Repeat until something grabs it.',
+      cold: 'Spring fish are few and hard-won.',
+      warm: 'A rising river after rain is the moment to be on the bank.',
+      warning: 'Needs a salmon and sea trout licence AND a beat permit. Mandatory catch and release ' +
+               'applies on many rivers — check the byelaws for the specific river.' }),
+
+    sp({ id: 'sea-trout', name: 'Sea trout', latin: 'Salmo trutta trutta', group: 'game',
+      waters: ['river'],
+      season: '000112333210', temp: [6, 10, 18, 22],
+      times: { dawn: 1, day: 0, dusk: 3, night: 3 },
+      rigs: ['fly-dry', 'fly-nymph'],
+      hook: 'Size 10–6', mainline: 'AFTM 7 floating', hooklength: '8–10 lb',
+      baits: [
+        ['Surface wake fly at night', 'The whole point of sea trout fishing.'],
+        ['Small silver tube', 'For the first hour of darkness.'],
+        ['Snake fly', 'Late, when it is properly black.']
+      ],
+      depth: 'Tails of pools after dark.',
+      how: 'Walk the pool in daylight so you know it blind. Then fish it in the dark.',
+      cold: 'Out of season most of the year — a summer night fishery.',
+      warm: 'Warm, still July and August nights.',
+      warning: 'Salmon and sea trout licence required. Night fishing needs permission on most beats.' }),
+
+    /* ------ sea species ------ */
+
+    sp({ id: 'bass', name: 'Bass', latin: 'Dicentrarchus labrax', group: 'sea',
+      waters: ['coastal'],
+      season: '001123333210', temp: [8, 12, 20, 24],
+      times: { dawn: 3, day: 1, dusk: 3, night: 2 },
+      rigs: ['pike-lure', 'running-ledger', 'sea-float'],
+      hook: 'Size 2/0–4/0', mainline: '15–20 lb', hooklength: '20 lb fluorocarbon',
+      baits: [
+        ['Surface or shallow-diving lure', 'Over rough ground on a rising tide.'],
+        ['Live or fresh peeler crab', 'The bait that beats lures when it is rough.'],
+        ['Whole squid or mackerel head', 'For the bigger fish at night.']
+      ],
+      depth: 'Tide races, gullies, surf tables and estuary mouths. Fish the moving water.',
+      how: 'Two hours either side of high water, and a bit of chop on the surface.',
+      cold: 'Most bass move off in winter — target them May to October.',
+      warm: 'Dawn on a summer tide with a lure is the best of it.',
+      warning: 'Bass are tightly regulated: minimum size, bag limits and closed periods change ' +
+               'year to year. Check the current rules before you keep anything.' }),
+
+    sp({ id: 'mackerel', name: 'Mackerel', latin: 'Scomber scombrus', group: 'sea',
+      waters: ['coastal'],
+      season: '000012333100', temp: [11, 14, 20, 24],
+      times: { dawn: 3, day: 2, dusk: 3, night: 0 },
+      rigs: ['sea-float', 'pike-lure'],
+      hook: 'Size 1–1/0 or feathers', mainline: '15 lb', hooklength: '15 lb',
+      baits: [
+        ['String of feathers', 'Fastest way to fill a bucket when they are in.'],
+        ['Small metal spinner', 'More sporting and just as effective.'],
+        ['Mackerel strip under a float', 'For a steady session off a pier.']
+      ],
+      depth: 'Upper few metres. If they are not in the top, they are not there.',
+      how: 'Watch for diving birds and surface swirls — that is the shoal.',
+      cold: 'Gone by late autumn.',
+      warm: 'June to September off almost any pier or rock mark.',
+      warning: 'Take only what you will eat. Dispatch them immediately.' }),
+
+    sp({ id: 'cod', name: 'Cod', latin: 'Gadus morhua', group: 'sea',
+      waters: ['coastal'],
+      season: '221000001233', temp: [2, 5, 13, 17],
+      times: { dawn: 2, day: 1, dusk: 3, night: 3 },
+      rigs: ['pulley', 'flapper'],
+      hook: 'Size 4/0–6/0 pennell', mainline: '18 lb + shockleader', hooklength: '60 lb',
+      baits: [
+        ['Lugworm and squid wrap', 'The winter cod bait, and nothing beats it.'],
+        ['Peeler crab', 'Early season, over rough ground.'],
+        ['Whole squid', 'For the bigger fish at range.']
+      ],
+      depth: 'Rough ground and gullies, especially in a coloured, storm-stirred sea.',
+      how: 'Big smelly baits, fished after a blow. Cod come in with the coloured water.',
+      cold: 'October to February is the season.',
+      warm: 'Largely absent inshore in summer.' }),
+
+    sp({ id: 'whiting', name: 'Whiting', latin: 'Merlangius merlangus', group: 'sea',
+      waters: ['coastal'],
+      season: '221000001233', temp: [2, 5, 14, 18],
+      times: { dawn: 1, day: 1, dusk: 3, night: 3 },
+      rigs: ['flapper', 'pulley'],
+      hook: 'Size 1–2/0', mainline: '15 lb', hooklength: '20 lb',
+      baits: [
+        ['Mackerel strip', 'Tough and they cannot leave it alone.'],
+        ['Ragworm', 'When you want quality rather than quantity.'],
+        ['Squid strip', 'Stays on through repeated bites.']
+      ],
+      depth: 'Clean sand at range, after dark.',
+      how: 'They find bait fast. If nothing in ten minutes, reel in and recast.',
+      cold: 'Autumn and winter, and they will keep you busy all night.',
+      warm: 'Mostly offshore in summer.' }),
+
+    sp({ id: 'flounder', name: 'Flounder', latin: 'Platichthys flesus', group: 'sea',
+      waters: ['coastal'],
+      season: '221100012333', temp: [2, 6, 16, 21],
+      times: { dawn: 2, day: 2, dusk: 2, night: 1 },
+      rigs: ['running-ledger', 'flapper'],
+      hook: 'Size 4–1 long shank', mainline: '12 lb', hooklength: '15 lb',
+      baits: [
+        ['Ragworm', 'With a couple of beads above the hook.'],
+        ['Peeler crab', 'The best flounder bait of the lot.'],
+        ['Lugworm tipped with squid', 'Adds scent on a coloured tide.']
+      ],
+      depth: 'Estuary mud and sand, in surprisingly shallow water.',
+      how: 'Slowly drag the bait back a foot at a time — the movement and beads pull them in.',
+      cold: 'Autumn into winter, before they head out to spawn.',
+      warm: 'Thin on the ground in high summer.' }),
+
+    sp({ id: 'plaice', name: 'Plaice', latin: 'Pleuronectes platessa', group: 'sea',
+      waters: ['coastal'],
+      season: '012333210001', temp: [5, 8, 17, 21],
+      times: { dawn: 2, day: 3, dusk: 2, night: 0 },
+      rigs: ['flapper', 'running-ledger'],
+      hook: 'Size 2–1 long shank', mainline: '12 lb', hooklength: '15 lb',
+      baits: [
+        ['Ragworm and razorfish', 'The spring plaice cocktail.'],
+        ['Lugworm', 'Simple and reliable.'],
+        ['Peeler crab', 'On the mussel beds.']
+      ],
+      depth: 'Clean sand and mussel beds, daylight, on a moving tide.',
+      how: 'Bright beads and a sequin above the hook genuinely help.',
+      cold: 'Inshore from March, best April and May.',
+      warm: 'Move off into deeper water by midsummer.' }),
+
+    sp({ id: 'pollack', name: 'Pollack', latin: 'Pollachius pollachius', group: 'sea',
+      waters: ['coastal'],
+      season: '112223333221', temp: [6, 9, 17, 21],
+      times: { dawn: 3, day: 2, dusk: 3, night: 0 },
+      rigs: ['pike-lure', 'sea-float'],
+      hook: 'Size 2/0–4/0', mainline: '20 lb braid', hooklength: '20 lb fluorocarbon',
+      baits: [
+        ['Soft plastic sandeel', 'Sink and draw over rough ground.'],
+        ['Metal jig', 'From a deep rock mark.'],
+        ['Live sandeel', 'If you can get them.']
+      ],
+      depth: 'Deep water hard against rock. They sit below and hit upwards.',
+      how: 'Let it sink, then a slow steady retrieve. The take is a savage downward run.',
+      cold: 'Available all year but best from spring through autumn.',
+      warm: 'Dawn and dusk over reefs.' }),
+
+    sp({ id: 'wrasse', name: 'Ballan wrasse', latin: 'Labrus bergylta', group: 'sea',
+      waters: ['coastal'],
+      season: '001133332100', temp: [10, 13, 19, 23],
+      times: { dawn: 2, day: 3, dusk: 2, night: 0 },
+      rigs: ['running-ledger', 'sea-float'],
+      hook: 'Size 1/0–3/0', mainline: '20–30 lb', hooklength: '25 lb',
+      baits: [
+        ['Hardback crab', 'The wrasse bait, and they will smash it.'],
+        ['Ragworm', 'Easier to get and still works.'],
+        ['Weedless soft plastic', 'Great sport over heavy kelp.']
+      ],
+      depth: 'Kelp and rock, often only a rod length out.',
+      how: 'Strong tackle and lock the drag — a wrasse will bury itself in kelp instantly.',
+      cold: 'They shut down over winter.',
+      warm: 'A summer species, and superb sport on light lure gear.',
+      warning: 'Wrasse are slow-growing and easily depleted. Return them, and do it quickly.' }),
+
+    sp({ id: 'smoothhound', name: 'Smoothhound', latin: 'Mustelus mustelus', group: 'sea',
+      waters: ['coastal'],
+      season: '000123332000', temp: [11, 14, 20, 23],
+      times: { dawn: 2, day: 2, dusk: 3, night: 2 },
+      rigs: ['pulley', 'running-ledger'],
+      hook: 'Size 3/0–5/0', mainline: '18 lb + shockleader', hooklength: '60 lb',
+      baits: [
+        ['Peeler crab', 'They eat almost nothing else. Do not bother without it.'],
+        ['Hermit crab', 'Excellent alternative where you can get them.'],
+        ['Squid', 'Distant third, but it has caught them.']
+      ],
+      depth: 'Sand and shingle over mixed ground, on a strong tide.',
+      how: 'A big run that empties the spool. Let it go, then lean into it.',
+      cold: 'Absent inshore in winter.',
+      warm: 'May to August, and pound for pound the best fight on the beach.' }),
+
+    sp({ id: 'mullet', name: 'Thick-lipped mullet', latin: 'Chelon labrosus', group: 'sea',
+      waters: ['coastal'],
+      season: '000123333100', temp: [11, 14, 21, 25],
+      times: { dawn: 2, day: 3, dusk: 2, night: 0 },
+      rigs: ['sea-float', 'waggler'],
+      hook: 'Size 10–6', mainline: '6 lb', hooklength: '4–5 lb fluorocarbon',
+      baits: [
+        ['Bread flake', 'Over a slick of mashed bread groundbait.'],
+        ['Harbour ragworm', 'In estuaries and marinas.'],
+        ['Small pieces of fish', 'Where they are used to scraps from boats.']
+      ],
+      depth: 'Just under the surface, in harbours, marinas and estuary creeks.',
+      how: 'Freshwater tactics on saltwater fish. Feed for an hour before you even cast.',
+      cold: 'They leave inshore water by late autumn.',
+      warm: 'Summer, and they are the hardest, most rewarding fish on this list.' })
+  ];
+
+  /* -------------------------------------------------------------------- venues */
+
+  /* Seed list of well-known UK waters. Prices and ratings are INDICATIVE editorial
+     values — a starting point, not quotes and not real review scores.
+
+     v(id, name, type, lat, lon, ticket, rating, breakdown, species, facilities, notes, url)
+       type      stillwater | reservoir | river | canal | coastal
+       ticket    indicative day ticket in £, or null when not recorded / not applicable
+       rating    editorial 0–5, one decimal
+       breakdown {stock, access, facilities, value} each 0–5
+       facilities subset of FACILITIES ids */
+  const FACILITIES = [
+    { id: 'parking', label: 'Parking', icon: 'car' },
+    { id: 'toilets', label: 'Toilets', icon: 'toilet' },
+    { id: 'tackle', label: 'Tackle & bait on site', icon: 'tackle' },
+    { id: 'cafe', label: 'Café', icon: 'cafe' },
+    { id: 'accessible', label: 'Accessible pegs', icon: 'accessible' },
+    { id: 'night', label: 'Night fishing', icon: 'moon' },
+    { id: 'dogs', label: 'Dogs allowed', icon: 'dog' },
+    { id: 'bailiff', label: 'Bailiff on site', icon: 'badge' }
+  ];
+
+  const v = (id, name, type, lat, lon, ticket, rating, breakdown, species, facilities, notes, url) =>
+    ({ id, name, type, lat, lon, ticket, rating, breakdown, species, facilities, notes, url,
+       source: 'seed', country: null, checked: '2026-08-01' });
+
+  const VENUES = [
+    /* ---- trout reservoirs ---- */
+    v('grafham', 'Grafham Water', 'reservoir', 52.2937, -0.3266, 35, 4.5,
+      { stock: 5, access: 4, facilities: 5, value: 4 },
+      ['rainbow-trout', 'brown-trout', 'pike', 'perch'],
+      ['parking', 'toilets', 'tackle', 'cafe', 'accessible', 'bailiff'],
+      'Major stocked trout fishery. Bank and boat. Pike fishing by separate permit in winter.',
+      'https://www.anglianwaterparks.co.uk/grafham-water'),
+    v('rutland', 'Rutland Water', 'reservoir', 52.6539, -0.6580, 38, 4.6,
+      { stock: 5, access: 4, facilities: 5, value: 4 },
+      ['rainbow-trout', 'brown-trout', 'pike', 'zander'],
+      ['parking', 'toilets', 'tackle', 'cafe', 'accessible', 'bailiff'],
+      'One of the best-known stillwater trout fisheries in Europe. Boats book up fast.',
+      'https://www.anglianwaterparks.co.uk/rutland-water'),
+    v('chew', 'Chew Valley Lake', 'reservoir', 51.3378, -2.6222, 34, 4.6,
+      { stock: 5, access: 4, facilities: 4, value: 4 },
+      ['rainbow-trout', 'brown-trout', 'pike'],
+      ['parking', 'toilets', 'cafe', 'bailiff'],
+      'Famous for both big trout and enormous pike. Pike fishing is a limited, balloted season.',
+      'https://www.bristolwater.co.uk/recreation/fishing'),
+    v('bewl', 'Bewl Water', 'reservoir', 51.0403, 0.4108, 32, 4.2,
+      { stock: 4, access: 4, facilities: 4, value: 4 },
+      ['rainbow-trout', 'brown-trout', 'pike'],
+      ['parking', 'toilets', 'cafe', 'accessible'],
+      'The largest area of open water in the south east. Bank and boat trout fishing.', null),
+    v('draycote', 'Draycote Water', 'reservoir', 52.3327, -1.3486, 30, 4.2,
+      { stock: 4, access: 5, facilities: 4, value: 4 },
+      ['rainbow-trout', 'brown-trout', 'perch'],
+      ['parking', 'toilets', 'cafe', 'accessible', 'bailiff'],
+      'Consistent Midlands trout water with easy bank access all the way round.', null),
+    v('pitsford', 'Pitsford Water', 'reservoir', 52.3183, -0.8639, 30, 4.3,
+      { stock: 4, access: 4, facilities: 4, value: 4 },
+      ['rainbow-trout', 'brown-trout', 'pike'],
+      ['parking', 'toilets', 'cafe', 'bailiff'],
+      'Well-regarded fly water, strong buzzer fishing from spring.', null),
+    v('carsington', 'Carsington Water', 'reservoir', 53.0570, -1.6320, 28, 4.1,
+      { stock: 4, access: 4, facilities: 4, value: 4 },
+      ['rainbow-trout', 'brown-trout'],
+      ['parking', 'toilets', 'cafe', 'accessible'],
+      'Peak District fringe reservoir, fly only. Exposed in a wind.', null),
+    v('blithfield', 'Blithfield Reservoir', 'reservoir', 52.8060, -1.9060, 30, 4.3,
+      { stock: 4, access: 3, facilities: 3, value: 4 },
+      ['rainbow-trout', 'brown-trout', 'pike'],
+      ['parking', 'toilets', 'bailiff'],
+      'Staffordshire trout water with a serious reputation for big pike in winter.', null),
+    v('wimbleball', 'Wimbleball Lake', 'reservoir', 51.0490, -3.4680, 28, 4.2,
+      { stock: 4, access: 3, facilities: 3, value: 4 },
+      ['rainbow-trout', 'brown-trout'],
+      ['parking', 'toilets', 'cafe'],
+      'Exmoor reservoir. Beautiful, and hard when the wind gets up.', null),
+    v('farmoor', 'Farmoor Reservoir', 'reservoir', 51.7580, -1.3520, 28, 4.0,
+      { stock: 4, access: 5, facilities: 3, value: 4 },
+      ['rainbow-trout', 'brown-trout'],
+      ['parking', 'toilets', 'accessible'],
+      'Two concrete-banked basins near Oxford. Easy walking, no shelter.', null),
+    v('llyn-brenig', 'Llyn Brenig', 'reservoir', 53.0700, -3.5100, 28, 4.3,
+      { stock: 4, access: 3, facilities: 4, value: 4 },
+      ['rainbow-trout', 'brown-trout'],
+      ['parking', 'toilets', 'cafe'],
+      'Large upland Welsh trout fishery with a wild brown trout catch-and-release area.', null),
+    v('llandegfedd', 'Llandegfedd Reservoir', 'reservoir', 51.6800, -2.9800, 28, 4.2,
+      { stock: 4, access: 4, facilities: 4, value: 4 },
+      ['rainbow-trout', 'brown-trout', 'pike'],
+      ['parking', 'toilets', 'cafe', 'accessible'],
+      'South Wales trout water, also known for very large pike.', null),
+    v('menteith', 'Lake of Menteith', 'stillwater', 56.1700, -4.2900, 40, 4.4,
+      { stock: 5, access: 4, facilities: 4, value: 3 },
+      ['rainbow-trout', 'brown-trout', 'pike'],
+      ['parking', 'toilets', 'cafe'],
+      'Scotland’s best-known stillwater trout fishery. Boat fishing dominates.', null),
+
+    /* ---- commercial coarse fisheries ---- */
+    v('linear', 'Linear Fisheries', 'stillwater', 51.7660, -1.3300, 15, 4.5,
+      { stock: 5, access: 4, facilities: 4, value: 4 },
+      ['carp', 'tench', 'bream', 'roach', 'perch', 'catfish'],
+      ['parking', 'toilets', 'tackle', 'night', 'bailiff'],
+      'Large Oxfordshire complex of specimen carp lakes plus easier match waters.',
+      'https://www.linear-fisheries.co.uk/'),
+    v('bury-hill', 'Bury Hill Fisheries', 'stillwater', 51.2210, -0.3480, 14, 4.3,
+      { stock: 4, access: 5, facilities: 5, value: 4 },
+      ['carp', 'bream', 'roach', 'perch', 'zander', 'tench'],
+      ['parking', 'toilets', 'tackle', 'cafe', 'accessible', 'bailiff'],
+      'Surrey day-ticket complex, well known for big perch and the "zander" lake.', null),
+    v('willow-park', 'Willow Park Fisheries', 'stillwater', 51.2740, -0.7580, 13, 4.1,
+      { stock: 4, access: 4, facilities: 4, value: 4 },
+      ['carp', 'tench', 'bream', 'roach', 'perch', 'catfish'],
+      ['parking', 'toilets', 'tackle', 'cafe', 'night'],
+      'Long-established Aldershot fishery with several lakes and a canal-style water.', null),
+    v('makins', 'Makins Fishery', 'stillwater', 52.4790, -1.4270, 12, 4.2,
+      { stock: 4, access: 5, facilities: 4, value: 4 },
+      ['carp', 'bream', 'roach', 'tench', 'perch'],
+      ['parking', 'toilets', 'cafe', 'accessible', 'night', 'bailiff'],
+      'Big Warwickshire match complex. Easy pegs, lots of fish.', null),
+    v('barston', 'Barston Lakes', 'stillwater', 52.4030, -1.7180, 14, 4.4,
+      { stock: 5, access: 5, facilities: 5, value: 4 },
+      ['carp', 'bream', 'tench', 'roach'],
+      ['parking', 'toilets', 'tackle', 'cafe', 'accessible', 'bailiff'],
+      'Solihull match venue with a strong reputation for large bream and F1 nets.', null),
+    v('packington', 'Packington Somers Fishery', 'stillwater', 52.4200, -1.6800, 12, 4.1,
+      { stock: 4, access: 4, facilities: 3, value: 4 },
+      ['carp', 'bream', 'tench', 'roach', 'perch', 'pike'],
+      ['parking', 'toilets', 'night', 'bailiff'],
+      'Several pools plus a stretch of the River Blythe, near Meriden.', null),
+    v('tunnel-barn', 'Tunnel Barn Farm', 'stillwater', 52.3200, -1.7100, 12, 4.2,
+      { stock: 5, access: 5, facilities: 4, value: 4 },
+      ['carp', 'bream', 'roach', 'tench'],
+      ['parking', 'toilets', 'cafe', 'accessible'],
+      'Warwickshire match fishery, famous for a bite-a-chuck reputation.', null),
+    v('todber', 'Todber Manor Fisheries', 'stillwater', 50.9500, -2.3200, 12, 4.3,
+      { stock: 5, access: 5, facilities: 5, value: 4 },
+      ['carp', 'bream', 'tench', 'roach', 'perch'],
+      ['parking', 'toilets', 'tackle', 'cafe', 'accessible', 'bailiff'],
+      'Dorset complex with on-site tackle shop and a wide range of lakes.', null),
+    v('white-acres', 'White Acres', 'stillwater', 50.3800, -4.9600, 14, 4.4,
+      { stock: 5, access: 5, facilities: 5, value: 3 },
+      ['carp', 'bream', 'tench', 'roach', 'perch'],
+      ['parking', 'toilets', 'tackle', 'cafe', 'accessible', 'bailiff'],
+      'Cornwall holiday park and match complex — one of the best-known in the country.', null),
+    v('anglers-paradise', 'Anglers Paradise', 'stillwater', 50.8700, -4.2300, 15, 4.3,
+      { stock: 5, access: 4, facilities: 4, value: 4 },
+      ['carp', 'catfish', 'tench', 'bream', 'perch'],
+      ['parking', 'toilets', 'night', 'bailiff'],
+      'Devon complex with an unusual range of species including catfish and golden orfe.', null),
+    v('partridge', 'Partridge Lakes', 'stillwater', 53.4300, -2.5300, 13, 4.3,
+      { stock: 5, access: 5, facilities: 4, value: 4 },
+      ['carp', 'bream', 'roach', 'tench'],
+      ['parking', 'toilets', 'cafe', 'accessible', 'bailiff'],
+      'Major north-west match venue near Warrington.', null),
+    v('lindholme', 'Lindholme Lakes', 'stillwater', 53.5600, -1.0000, 13, 4.2,
+      { stock: 5, access: 5, facilities: 4, value: 4 },
+      ['carp', 'bream', 'roach', 'tench', 'perch'],
+      ['parking', 'toilets', 'cafe', 'accessible', 'bailiff'],
+      'Large Doncaster complex, heavily used for matches.', null),
+    v('cudmore', 'Cudmore Fisheries', 'stillwater', 52.9200, -2.2500, 12, 4.1,
+      { stock: 4, access: 4, facilities: 4, value: 4 },
+      ['carp', 'bream', 'roach', 'tench'],
+      ['parking', 'toilets', 'cafe', 'night'],
+      'Staffordshire fishery with a mix of match and specimen lakes.', null),
+    v('boddington', 'Boddington Reservoir', 'reservoir', 52.1500, -1.3000, 8, 3.9,
+      { stock: 4, access: 3, facilities: 2, value: 5 },
+      ['carp', 'bream', 'roach', 'perch', 'pike'],
+      ['parking'],
+      'Canal feeder reservoir in Northamptonshire. Day tickets, big bream and pike.', null),
+    v('napton', 'Napton Reservoir', 'reservoir', 52.2500, -1.3200, 8, 3.8,
+      { stock: 3, access: 3, facilities: 2, value: 5 },
+      ['carp', 'bream', 'roach', 'tench', 'pike'],
+      ['parking'],
+      'Quiet Warwickshire feeder reservoir. Old-fashioned, weedy and rewarding.', null),
+
+    /* ---- rivers ---- */
+    v('trent-newark', 'River Trent at Newark', 'river', 53.0770, -0.8090, 6, 4.2,
+      { stock: 4, access: 4, facilities: 2, value: 5 },
+      ['barbel', 'chub', 'bream', 'roach', 'perch', 'zander', 'pike'],
+      ['parking'],
+      'Big-river fishing through the town. Barbel and bream in numbers; club or day tickets on most stretches.', null),
+    v('severn-bewdley', 'River Severn at Bewdley', 'river', 52.3760, -2.3170, 6, 4.3,
+      { stock: 4, access: 4, facilities: 2, value: 5 },
+      ['barbel', 'chub', 'bream', 'roach', 'dace', 'pike'],
+      ['parking', 'toilets'],
+      'Classic middle Severn barbel and chub water, with town-centre access.', null),
+    v('wye-hereford', 'River Wye at Hereford', 'river', 52.0530, -2.7150, 8, 4.4,
+      { stock: 4, access: 4, facilities: 2, value: 4 },
+      ['barbel', 'chub', 'salmon', 'pike', 'dace'],
+      ['parking'],
+      'Superb barbel and chub river. Salmon fishing is separate and permit-controlled.', null),
+    v('avon-royalty', 'Royalty Fishery, River Avon', 'river', 50.7380, -1.7810, 20, 4.5,
+      { stock: 5, access: 4, facilities: 3, value: 3 },
+      ['barbel', 'chub', 'roach', 'perch', 'pike', 'salmon'],
+      ['parking', 'toilets', 'bailiff'],
+      'One of the most famous day-ticket fisheries in the country, at Christchurch.', null),
+    v('nene-peterborough', 'River Nene, Peterborough Embankment', 'river', 52.5730, -0.2470, 0, 3.8,
+      { stock: 3, access: 5, facilities: 3, value: 5 },
+      ['bream', 'roach', 'perch', 'pike', 'zander', 'chub'],
+      ['parking', 'toilets', 'accessible'],
+      'Free town-centre fishing on the Embankment stretch. Easy access, decent bream and zander.', null),
+    v('ouse-york', 'River Ouse at York', 'river', 53.9560, -1.0870, 5, 3.9,
+      { stock: 3, access: 4, facilities: 3, value: 5 },
+      ['chub', 'barbel', 'bream', 'roach', 'dace', 'pike'],
+      ['parking', 'toilets'],
+      'City-centre river fishing on club-controlled stretches. Best when carrying some colour.', null),
+    v('ribble-preston', 'River Ribble at Preston', 'river', 53.7600, -2.7100, 5, 3.9,
+      { stock: 3, access: 3, facilities: 2, value: 5 },
+      ['chub', 'dace', 'roach', 'barbel', 'salmon', 'sea-trout'],
+      ['parking'],
+      'Mixed coarse and game river. Club permits needed on most of it.', null),
+    v('kennet-newbury', 'River Kennet at Newbury', 'river', 51.3980, -1.3230, 6, 4.0,
+      { stock: 3, access: 4, facilities: 3, value: 4 },
+      ['chub', 'barbel', 'roach', 'perch', 'pike', 'brown-trout'],
+      ['parking', 'toilets'],
+      'Clear chalk-influenced river with town-centre club water.', null),
+    v('thames-reading', 'River Thames at Reading', 'river', 51.4600, -0.9700, 0, 3.7,
+      { stock: 3, access: 4, facilities: 3, value: 5 },
+      ['bream', 'roach', 'perch', 'pike', 'chub', 'barbel', 'zander'],
+      ['parking', 'toilets'],
+      'Long stretches of free and club water through town. Perch around the moorings.', null),
+    v('tweed-kelso', 'River Tweed at Kelso', 'river', 55.5980, -2.4340, null, 4.6,
+      { stock: 5, access: 3, facilities: 3, value: 2 },
+      ['salmon', 'sea-trout', 'brown-trout', 'grayling'],
+      ['parking'],
+      'World-famous salmon river. Beats are let individually and prices vary enormously by season.', null),
+    v('wye-builth', 'River Wye at Builth Wells', 'river', 52.1500, -3.4000, 12, 4.2,
+      { stock: 4, access: 3, facilities: 2, value: 4 },
+      ['barbel', 'chub', 'grayling', 'salmon', 'brown-trout'],
+      ['parking'],
+      'Upper Wye. Grayling in winter, barbel and chub through the season.', null),
+
+    /* ---- canals ---- */
+    v('gu-milton-keynes', 'Grand Union Canal, Milton Keynes', 'canal', 52.0400, -0.7600, 0, 3.6,
+      { stock: 3, access: 5, facilities: 2, value: 5 },
+      ['roach', 'perch', 'bream', 'carp', 'pike', 'zander', 'gudgeon'],
+      ['parking'],
+      'Miles of towpath fishing. Most of it is club or Canal & River Trust controlled — a Waterway Wanderers permit covers a lot of it.', null),
+    v('trent-mersey-stone', 'Trent & Mersey Canal, Stone', 'canal', 52.9000, -2.1500, 0, 3.5,
+      { stock: 3, access: 5, facilities: 2, value: 5 },
+      ['roach', 'perch', 'bream', 'gudgeon', 'carp', 'pike'],
+      ['parking', 'toilets'],
+      'Steady canal fishing with easy access. Club permit needed on most lengths.', null),
+    v('leeds-liverpool-burnley', 'Leeds & Liverpool Canal, Burnley', 'canal', 53.7900, -2.2400, 0, 3.5,
+      { stock: 3, access: 5, facilities: 2, value: 5 },
+      ['roach', 'perch', 'bream', 'carp', 'pike', 'gudgeon'],
+      ['parking'],
+      'Long urban and semi-rural canal. Good winter roach on bread punch.', null),
+    v('bridgewater-sale', 'Bridgewater Canal, Sale', 'canal', 53.4200, -2.3300, 0, 3.6,
+      { stock: 3, access: 5, facilities: 2, value: 5 },
+      ['roach', 'perch', 'bream', 'carp', 'pike', 'gudgeon'],
+      ['parking', 'toilets'],
+      'Wide, deep canal with a good head of perch around the boat moorings.', null),
+    v('kennet-avon-bath', 'Kennet & Avon Canal, Bath', 'canal', 51.3800, -2.3400, 0, 3.7,
+      { stock: 3, access: 4, facilities: 3, value: 5 },
+      ['roach', 'perch', 'bream', 'tench', 'carp', 'pike'],
+      ['parking', 'toilets', 'cafe'],
+      'Scenic canal fishing. Club or CRT permit required on most stretches.', null),
+
+    /* ---- Scotland ---- */
+    v('loch-lomond', 'Loch Lomond', 'stillwater', 56.0800, -4.6200, 15, 4.4,
+      { stock: 4, access: 3, facilities: 3, value: 4 },
+      ['pike', 'perch', 'brown-trout', 'salmon', 'sea-trout', 'roach'],
+      ['parking', 'toilets'],
+      'Huge, wild loch. Permits from the Loch Lomond Angling Improvement Association. No rod licence in Scotland, but permission is essential.', null),
+    v('loch-awe', 'Loch Awe', 'stillwater', 56.3800, -5.1500, 12, 4.3,
+      { stock: 4, access: 3, facilities: 2, value: 4 },
+      ['pike', 'brown-trout', 'perch', 'salmon'],
+      ['parking'],
+      'Long Argyll loch with a reputation for very big pike and wild brown trout.', null),
+
+    /* ---- coastal ---- */
+    v('chesil', 'Chesil Beach', 'coastal', 50.6000, -2.5000, 0, 4.5,
+      { stock: 5, access: 2, facilities: 2, value: 5 },
+      ['cod', 'bass', 'mackerel', 'plaice', 'whiting', 'smoothhound', 'pollack'],
+      ['parking'],
+      'Legendary Dorset shingle bank. Deep water close in, and hard walking on the pebbles.', null),
+    v('brighton-marina', 'Brighton Marina', 'coastal', 50.8100, -0.1000, 0, 4.0,
+      { stock: 4, access: 5, facilities: 4, value: 5 },
+      ['bass', 'mackerel', 'whiting', 'cod', 'mullet', 'flounder'],
+      ['parking', 'toilets', 'cafe', 'accessible'],
+      'Accessible wall and arm fishing with parking right behind you. A permit is needed for the western arm.', null),
+    v('southend-pier', 'Southend Pier', 'coastal', 51.5200, 0.7200, 0, 3.8,
+      { stock: 3, access: 4, facilities: 4, value: 4 },
+      ['bass', 'flounder', 'whiting', 'smoothhound', 'mullet'],
+      ['parking', 'toilets', 'cafe', 'accessible'],
+      'The longest pleasure pier in the world. Pier fishing is ticketed and has set hours.', null),
+    v('whitby-piers', 'Whitby Piers', 'coastal', 54.4900, -0.6100, 0, 4.1,
+      { stock: 4, access: 4, facilities: 4, value: 5 },
+      ['cod', 'mackerel', 'whiting', 'pollack', 'wrasse', 'bass'],
+      ['parking', 'toilets', 'cafe'],
+      'Productive North Yorkshire piers, with cod through the winter.', null),
+    v('dover-admiralty', 'Dover, Admiralty Pier', 'coastal', 51.1200, 1.3200, 0, 4.2,
+      { stock: 4, access: 4, facilities: 3, value: 4 },
+      ['cod', 'bass', 'whiting', 'mackerel', 'pollack', 'plaice'],
+      ['parking', 'toilets'],
+      'Deep water off the end and a long history of big fish. A permit and set opening times apply.', null),
+    v('aberystwyth', 'Aberystwyth Seafront', 'coastal', 52.4150, -4.0900, 0, 3.8,
+      { stock: 3, access: 5, facilities: 4, value: 5 },
+      ['bass', 'mackerel', 'whiting', 'flounder', 'pollack', 'wrasse'],
+      ['parking', 'toilets', 'cafe'],
+      'Easy access from the promenade and the stone jetty. Good summer mackerel.', null),
+    v('newhaven-west', 'Newhaven West Beach', 'coastal', 50.7800, 0.0500, 0, 3.9,
+      { stock: 4, access: 4, facilities: 2, value: 5 },
+      ['bass', 'cod', 'whiting', 'smoothhound', 'flounder', 'plaice'],
+      ['parking'],
+      'Shingle beach beside the harbour arm. Fishes well on a coloured tide.', null)
+  ];
+
+  /* Water-type presentation. Colours are also used for the map pins. */
+  const WATER_TYPES = {
+    stillwater: { label: 'Stillwater', colour: '#3fa7d6', short: 'Lake' },
+    reservoir:  { label: 'Reservoir',  colour: '#5c6bc0', short: 'Res' },
+    river:      { label: 'River',      colour: '#43b581', short: 'River' },
+    canal:      { label: 'Canal',      colour: '#c9a227', short: 'Canal' },
+    coastal:    { label: 'Sea',        colour: '#ef7d57', short: 'Sea' }
+  };
+
+  G.data = {
+    LICENCE, REGIONS, CLOSE_SEASON, RIGS, RIG_PARTS, SPECIES, VENUES, FACILITIES, WATER_TYPES,
+    species: (id) => SPECIES.find((s) => s.id === id) || null,
+    rig: (id) => RIGS.find((r) => r.id === id) || null,
+    facility: (id) => FACILITIES.find((f) => f.id === id) || null
+  };
+})(window.Cast = window.Cast || {});

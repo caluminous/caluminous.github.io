@@ -1,0 +1,16 @@
+{
+  "name": "Cast — where to fish today",
+  "short_name": "Cast",
+  "description": "Find waters near you, see what a day's fishing legally costs including the rod licence, and get the rig and bait for whatever is biting.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b1114",
+  "theme_color": "#0b1114",
+  "categories": ["sports", "travel", "utilities"],
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
