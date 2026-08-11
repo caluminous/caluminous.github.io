@@ -149,27 +149,33 @@
     }
 
     /* Pins that would sit on top of each other collapse into a count bubble.
-       Grid-bucketing is enough here and costs nothing — it re-runs on every frame. */
-    function cluster(points, cellPx) {
-      const cells = new Map();
-      for (const p of points) {
-        const key = Math.floor(p.x / cellPx) + ':' + Math.floor(p.y / cellPx);
-        if (!cells.has(key)) cells.set(key, []);
-        cells.get(key).push(p);
-      }
+       Greedy distance clustering rather than grid bucketing: two points a few pixels apart
+       but either side of a grid line produced two bubbles that overlapped, and the one
+       painted last silently swallowed taps meant for the other. Comparing actual distances
+       guarantees no two markers land within `radius` of each other. n is the number of
+       markers in view, so the quadratic pass is cheap. */
+    function cluster(points, radius) {
       const out = [];
-      for (const group of cells.values()) {
-        if (group.length === 1 || group.some((g) => g.venue.id === state.selected)) {
-          /* Never hide the selected pin inside a cluster. */
-          if (group.length === 1) { out.push({ single: group[0] }); continue; }
-          const sel = group.find((g) => g.venue.id === state.selected);
-          out.push({ single: sel });
-          const rest = group.filter((g) => g !== sel);
-          if (rest.length === 1) out.push({ single: rest[0] });
-          else out.push({ group: rest, x: avg(rest, 'x'), y: avg(rest, 'y') });
-          continue;
+      const used = new Array(points.length).fill(false);
+
+      for (let i = 0; i < points.length; i++) {
+        if (used[i]) continue;
+        const p = points[i];
+        used[i] = true;
+
+        /* The selected pin is never folded into a cluster, and never absorbs one. */
+        if (p.venue.id === state.selected) { out.push({ single: p }); continue; }
+
+        const members = [p];
+        for (let j = i + 1; j < points.length; j++) {
+          if (used[j] || points[j].venue.id === state.selected) continue;
+          if (Math.hypot(points[j].x - p.x, points[j].y - p.y) < radius) {
+            members.push(points[j]);
+            used[j] = true;
+          }
         }
-        out.push({ group, x: avg(group, 'x'), y: avg(group, 'y') });
+        if (members.length === 1) out.push({ single: p });
+        else out.push({ group: members, x: avg(members, 'x'), y: avg(members, 'y') });
       }
       return out;
     }
@@ -202,13 +208,24 @@
       const pts = [];
       for (const v of state.venues) {
         const p = latLonToPoint(v.lat, v.lon);
-        if (p.x < -80 || p.y < -80 || p.x > state.width + 80 || p.y > state.height + 80) continue;
+        if (p.x < -30 || p.y < -30 || p.x > state.width + 30 || p.y > state.height + 30) continue;
         pts.push({ x: p.x, y: p.y, venue: v });
       }
 
+      /* Only draw a marker that fits entirely inside the map. A partly-off-edge marker is
+         clipped by overflow:hidden but stays in the DOM, where it silently eats taps meant
+         for whatever is drawn over it. `up` is how far the marker extends above its anchor. */
+      const fits = (x, y, up) =>
+        x >= 18 && x <= state.width - 18 && y >= up && y <= state.height - 18;
+
       for (const item of cluster(pts, 40)) {
-        if (item.single) markerPane.appendChild(pinFor(item.single));
-        else markerPane.appendChild(clusterFor(item));
+        if (item.single) {
+          if (!fits(item.single.x, item.single.y, 36)) continue;
+          markerPane.appendChild(pinFor(item.single));
+        } else {
+          if (!fits(item.x, item.y, 18)) continue;
+          markerPane.appendChild(clusterFor(item));
+        }
       }
     }
 
