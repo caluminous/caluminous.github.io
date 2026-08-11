@@ -336,6 +336,334 @@
        'For mullet, scale everything down and expect to be ignored for an hour first.'])
   ];
 
+  /* --------------------------------------------------------------------- knots */
+
+  /* Knots are drawn, not photographed. Each stage is a list of primitives in a 200×108
+     space that ui.js renders as SVG: `line` paths are stroked with a casing first, so a
+     path drawn later reads as passing OVER the one beneath it — which is the whole trick
+     to making a knot legible as a picture. */
+  const knot = (id, name, use, strength, stages, notes) => ({ id, name, use, strength, stages, notes });
+
+  const KNOTS = [
+    knot('palomar', 'Palomar knot', 'Hook or swivel. The strongest simple knot there is.', 'about 95%',
+      [
+        { cap: 'Double 15 cm of line and pass the loop through the eye.',
+          art: [{ t: 'eye', x: 152, y: 54 }, { t: 'double', d: 'M14 54 H140' }, { t: 'arrow', d: 'M108 28 H154' }] },
+        { cap: 'Tie a loose overhand knot with the doubled line. Do not pull it up yet.',
+          art: [{ t: 'eye', x: 152, y: 54 }, { t: 'double', d: 'M14 54 H88' },
+                { t: 'double', d: 'M88 54 C52 22 52 86 92 62 C112 52 130 54 140 54' },
+                { t: 'label', x: 62, y: 96, text: 'keep it loose' }] },
+        { cap: 'Pass the loop right over the hook, then wet it and pull both ends together.',
+          art: [{ t: 'hook', x: 148, y: 44 }, { t: 'double', d: 'M14 54 H80' },
+                { t: 'double', d: 'M80 54 C60 26 60 84 96 74' },
+                { t: 'line', d: 'M96 74 C124 84 156 78 156 62' },
+                { t: 'arrow', d: 'M112 96 C136 100 158 92 160 74' }] }
+      ],
+      'Never let the loop wrap the hook point as you seat it — check it sits above the eye before you pull.'),
+
+    knot('grinner', 'Grinner (uni) knot', 'Hook, swivel or lead clip. The all-rounder.', 'about 90%',
+      [
+        { cap: 'Through the eye, then lay the tag back alongside the standing line.',
+          art: [{ t: 'eye', x: 152, y: 54 }, { t: 'line', d: 'M14 54 H140' },
+                { t: 'line', d: 'M152 62 C120 78 90 74 66 70', tag: true }] },
+        { cap: 'Turn the tag back to make a loop, and take five turns through it around both lines.',
+          art: [{ t: 'eye', x: 152, y: 54 }, { t: 'line', d: 'M14 54 H140' },
+                { t: 'line', d: 'M152 62 C126 84 74 86 62 66', tag: true },
+                { t: 'coil', x: 76, y: 54, n: 5, step: 13 }] },
+        { cap: 'Wet it, pull the tag to close the coils, then slide the whole knot down to the eye.',
+          art: [{ t: 'eye', x: 152, y: 54 }, { t: 'line', d: 'M14 54 H108' },
+                { t: 'coil', x: 112, y: 54, n: 5, step: 7 },
+                { t: 'line', d: 'M148 54 H152' },
+                { t: 'arrow', d: 'M100 84 H146' }] }
+      ],
+      'Five turns for mono up to 10 lb, four for anything heavier — more turns will not seat properly.'),
+
+    knot('clinch', 'Improved clinch', 'Hook or swivel in mono. Quick, and everyone knows it.', 'about 85%',
+      [
+        { cap: 'Through the eye, then twist the tag six times around the standing line.',
+          art: [{ t: 'eye', x: 152, y: 54 }, { t: 'line', d: 'M14 54 H140' },
+                { t: 'coil', x: 70, y: 54, n: 6, step: 11 },
+                { t: 'line', d: 'M152 62 C132 74 76 72 64 62', tag: true }] },
+        { cap: 'Pass the tag back through the small loop right by the eye.',
+          art: [{ t: 'eye', x: 152, y: 54 }, { t: 'line', d: 'M14 54 H140' },
+                { t: 'coil', x: 70, y: 54, n: 6, step: 11 },
+                { t: 'line', d: 'M64 62 C90 82 130 82 138 62', tag: true },
+                { t: 'arrow', d: 'M150 86 C146 74 142 68 138 62' }] },
+        { cap: 'Then back through the big loop you just made. Wet it and pull tight.',
+          art: [{ t: 'eye', x: 152, y: 54 }, { t: 'line', d: 'M14 54 H140' },
+                { t: 'coil', x: 70, y: 54, n: 6, step: 11 },
+                { t: 'line', d: 'M138 62 C120 92 74 88 58 70', tag: true },
+                { t: 'label', x: 62, y: 100, text: 'wet before tightening' }] }
+      ],
+      'Do not use it in braid — it slips. Braid wants a palomar.'),
+
+    knot('knotless', 'Knotless knot (the hair rig)', 'Hair rigs. The one carp knot worth learning properly.', 'about 90%',
+      [
+        { cap: 'Tie a small loop in the end of the hooklink. That loop carries the bait.',
+          art: [{ t: 'line', d: 'M14 54 H120' },
+                { t: 'line', d: 'M120 54 C142 40 162 48 158 58 C154 68 132 66 120 54' },
+                { t: 'label', x: 132, y: 88, text: 'bait loop' }] },
+        { cap: 'Thread the other end through the BACK of the hook eye, and slide it to set the hair length.',
+          art: [{ t: 'hook', x: 120, y: 40, big: true },
+                { t: 'line', d: 'M14 34 H112' },
+                { t: 'line', d: 'M120 40 C140 52 154 62 156 76' },
+                { t: 'line', d: 'M156 76 C168 70 172 82 160 88 C150 92 146 84 156 76' },
+                { t: 'arrow', d: 'M92 16 H118' }] },
+        { cap: 'Whip seven or eight tight turns down the shank, trapping the hair against it.',
+          art: [{ t: 'hook', x: 120, y: 40, big: true },
+                { t: 'line', d: 'M14 34 H100' },
+                { t: 'coil', x: 104, y: 40, n: 7, step: 6, vertical: true },
+                { t: 'line', d: 'M120 76 C138 82 150 84 156 82' }] },
+        { cap: 'Pass the end back out through the FRONT of the eye and pull it down tight.',
+          art: [{ t: 'hook', x: 120, y: 40, big: true },
+                { t: 'coil', x: 104, y: 40, n: 7, step: 6, vertical: true },
+                { t: 'line', d: 'M14 34 H112' },
+                { t: 'arrow', d: 'M150 20 C136 24 126 30 120 38' },
+                { t: 'label', x: 34, y: 100, text: 'front, not back' }] }
+      ],
+      'The hair must leave the shank level with the hook point. Too high and it will not turn in the fish’s mouth.'),
+
+    knot('loop-loop', 'Loop to loop', 'Joining a hooklink to a leader, with no tools.', 'about 80%',
+      [
+        { cap: 'Pass loop A through loop B.',
+          art: [{ t: 'line', d: 'M14 40 H62 C88 40 88 68 62 68 H14' },
+                { t: 'line', d: 'M186 40 H132 C106 40 106 68 132 68 H186' },
+                { t: 'arrow', d: 'M78 92 H118' }] },
+        { cap: 'Take the far end of A back through itself.',
+          art: [{ t: 'line', d: 'M14 40 H70 C96 40 96 68 70 68 H14' },
+                { t: 'line', d: 'M186 54 C150 54 120 40 84 54 C120 68 150 54 186 54' }] },
+        { cap: 'Pull steadily. It should seat as a neat square, not a lark’s head.',
+          art: [{ t: 'line', d: 'M14 54 H78 C96 44 96 64 78 54' },
+                { t: 'line', d: 'M186 54 H108 C90 44 90 64 108 54' },
+                { t: 'label', x: 56, y: 92, text: 'square = right' }] }
+      ],
+      'A neat, quick join — but it is the weakest link in any rig, so check it after every fish.'),
+
+    knot('fig8', 'Figure-of-eight loop', 'A loop in the end of a hooklink or lead link.', 'about 80%',
+      [
+        { cap: 'Double the line back on itself to make a loop.',
+          art: [{ t: 'double', d: 'M14 54 H110' }, { t: 'line', d: 'M110 54 C150 34 172 74 128 66' }] },
+        { cap: 'Give the doubled line one extra twist, then pass the loop through.',
+          art: [{ t: 'double', d: 'M14 54 H86' },
+                { t: 'line', d: 'M86 54 C118 28 156 44 146 62 C138 78 100 76 92 62' },
+                { t: 'arrow', d: 'M112 96 C128 88 138 76 142 66' }] },
+        { cap: 'Wet it and pull. A neat, quick loop that does not slip.',
+          art: [{ t: 'double', d: 'M14 54 H96' }, { t: 'line', d: 'M96 54 C118 40 150 48 150 54 C150 60 118 68 96 54' }] }
+      ],
+      'Quicker than a surgeon’s loop and easier to see when it has gone wrong.'),
+
+    knot('double-grinner', 'Double grinner', 'Joining two lines of similar diameter.', 'about 85%',
+      [
+        { cap: 'Overlap the two lines, facing opposite ways.',
+          art: [{ t: 'line', d: 'M14 48 H150' }, { t: 'line', d: 'M186 60 H50', tag: true }] },
+        { cap: 'Tie a grinner with each tag around the other line — four turns each.',
+          art: [{ t: 'line', d: 'M14 48 H150' }, { t: 'line', d: 'M186 60 H50', tag: true },
+                { t: 'coil', x: 56, y: 54, n: 4, step: 11 }, { t: 'coil', x: 118, y: 54, n: 4, step: 11 }] },
+        { cap: 'Pull the two standing lines apart so the knots slide together.',
+          art: [{ t: 'line', d: 'M14 54 H76' }, { t: 'coil', x: 80, y: 54, n: 4, step: 7 },
+                { t: 'coil', x: 110, y: 54, n: 4, step: 7 }, { t: 'line', d: 'M140 54 H186' },
+                { t: 'arrow', d: 'M60 86 H14' }, { t: 'arrow', d: 'M140 86 H186' }] }
+      ],
+      'For very different diameters use an albright instead — a double grinner will bite into the thinner line.'),
+
+    knot('water-knot', 'Four-turn water knot', 'Making a dropper on a leader — fly casts and paternosters.', 'about 80%',
+      [
+        { cap: 'Overlap the two line ends by about 15 cm.',
+          art: [{ t: 'line', d: 'M14 48 H150' }, { t: 'line', d: 'M186 60 H50' }] },
+        { cap: 'Form a loop with both, and pass both ends through it four times.',
+          art: [{ t: 'line', d: 'M14 48 H104' }, { t: 'line', d: 'M186 60 H104' },
+                { t: 'line', d: 'M104 48 C64 30 60 84 104 66' },
+                { t: 'coil', x: 76, y: 54, n: 4, step: 11 }] },
+        { cap: 'Wet and pull all four ends. The dropper is the tag pointing back down the leader.',
+          art: [{ t: 'line', d: 'M14 54 H84' }, { t: 'coil', x: 88, y: 54, n: 4, step: 8 },
+                { t: 'line', d: 'M122 54 H186' },
+                { t: 'line', d: 'M110 60 C118 82 128 92 140 98', tag: true },
+                { t: 'label', x: 118, y: 26, text: 'dropper' }] }
+      ],
+      'Take the dropper from the tag that points back towards the fly line, or it will tangle every cast.'),
+
+    knot('albright', 'Albright knot', 'Braid to a mono shockleader. Slim enough to go through the rings.', 'about 85%',
+      [
+        { cap: 'Make a loop in the thicker mono leader.',
+          art: [{ t: 'line', d: 'M186 54 H110 C80 54 80 34 110 34' }] },
+        { cap: 'Pass the braid through the loop and wrap ten turns back along it.',
+          art: [{ t: 'line', d: 'M186 54 H110 C80 54 80 34 110 34' },
+                { t: 'line', d: 'M14 70 C60 70 80 60 96 44', tag: true },
+                { t: 'coil', x: 96, y: 44, n: 8, step: 9 }] },
+        { cap: 'Feed the braid back out of the loop the same side it went in, and tighten slowly.',
+          art: [{ t: 'line', d: 'M186 54 H120 C96 54 96 40 120 40' },
+                { t: 'coil', x: 104, y: 47, n: 8, step: 8 },
+                { t: 'line', d: 'M14 70 C60 70 84 62 100 52', tag: true },
+                { t: 'arrow', d: 'M150 88 C140 76 132 66 124 58' }] }
+      ],
+      'Tighten it slowly and wet it well. Braid pulled fast against mono will cut straight through it.'),
+
+    knot('stop-knot', 'Sliding stop knot', 'Setting the depth on a sliding float.', 'grips but slides',
+      [
+        { cap: 'Lay a 15 cm length of power gum alongside the mainline.',
+          art: [{ t: 'line', d: 'M14 48 H186' }, { t: 'line', d: 'M52 66 H140', tag: true }] },
+        { cap: 'Form a loop with the gum and take five turns through it, around the mainline.',
+          art: [{ t: 'line', d: 'M14 48 H186' },
+                { t: 'line', d: 'M60 66 C60 88 130 88 130 66', tag: true },
+                { t: 'coil', x: 74, y: 48, n: 5, step: 11 }] },
+        { cap: 'Pull tight and leave 1 cm tags. It holds, but still slides when you push it.',
+          art: [{ t: 'line', d: 'M14 48 H186' }, { t: 'coil', x: 86, y: 48, n: 5, step: 6 },
+                { t: 'line', d: 'M104 56 V72', tag: true }, { t: 'line', d: 'M112 56 V72', tag: true },
+                { t: 'arrow', d: 'M150 76 H120' }] }
+      ],
+      'Leave the tags long enough to grip. Trimmed flush, a stop knot will pull through the float eye.')
+  ];
+
+  /* Tying instructions per rig. `upTo` is how many components (in order down the line)
+     the step diagram should show, so the picture builds up as the instructions go. */
+  const RIG_STEPS = {
+    'hair-bolt': [
+      { do: 'Thread the lead onto the mainline, then a rubber shock bead behind it.', upTo: 2 },
+      { do: 'Tie a quick-change swivel to the end of the mainline.', upTo: 3, knot: 'palomar' },
+      { do: 'Cut 20 cm of coated braid and strip 3 cm of the coating off one end.', upTo: 3 },
+      { do: 'Tie a small bait loop in the stripped end — that loop is the hair.', upTo: 4, knot: 'fig8' },
+      { do: 'Fit the hook with a knotless knot, setting the hair so the bait will sit just under the bend.', upTo: 5, knot: 'knotless' },
+      { do: 'Mount the boilie on the hair and lock it with a bait stop.', upTo: 6 },
+      { do: 'Clip the hooklink to the swivel. Check the lead runs freely — if a carp snaps you off, it has to be able to shed it.', upTo: 6 }
+    ],
+    method: [
+      { do: 'Thread the mainline through the inline feeder and out of the other end.', upTo: 1 },
+      { do: 'Tie the quick-change bead onto the mainline below the feeder.', upTo: 2, knot: 'palomar' },
+      { do: 'Make up a 10–15 cm hooklength with a loop at one end and the hook at the other.', upTo: 4, knot: 'grinner' },
+      { do: 'Clip the hooklength onto the bead, and band the pellet onto the hook.', upTo: 5 },
+      { do: 'Mould groundbait round the feeder and press the hookbait into it.', upTo: 5 }
+    ],
+    'maggot-feeder': [
+      { do: 'Thread the feeder link onto the mainline so it runs free.', upTo: 1 },
+      { do: 'Tie a link swivel to the end of the mainline to stop the feeder.', upTo: 2, knot: 'palomar' },
+      { do: 'Tie a 60–90 cm hooklength with a loop one end, hook the other.', upTo: 4, knot: 'grinner' },
+      { do: 'Join hooklength to swivel loop to loop.', upTo: 4, knot: 'loop-loop' },
+      { do: 'Bait up, fill the feeder, and clip up so every cast lands on the same spot.', upTo: 5 }
+    ],
+    helicopter: [
+      { do: 'Thread the inline feeder onto the mainline.', upTo: 1 },
+      { do: 'Slide on the top stop bead, then the hooklink swivel, then the bottom bead.', upTo: 4 },
+      { do: 'Set the two beads a couple of centimetres apart so the swivel spins freely between them.', upTo: 4 },
+      { do: 'Tie the mainline to the feeder or a lead clip below.', upTo: 4, knot: 'palomar' },
+      { do: 'Make up the hooklength and clip it to the swivel.', upTo: 7, knot: 'knotless' }
+    ],
+    'running-ledger': [
+      { do: 'Thread the lead or feeder link onto the mainline.', upTo: 1 },
+      { do: 'Add a buffer bead below it to protect the knot.', upTo: 2 },
+      { do: 'Tie a swivel on the end of the mainline.', upTo: 3, knot: 'palomar' },
+      { do: 'Tie a 45–90 cm hooklength to the other eye of the swivel.', upTo: 4, knot: 'grinner' },
+      { do: 'Add the hook and bait. Check the lead slides freely.', upTo: 6, knot: 'grinner' }
+    ],
+    paternoster: [
+      { do: 'Tie the mainline to the top eye of a three-way swivel.', upTo: 1, knot: 'palomar' },
+      { do: 'Tie a 30 cm hook link to the side eye.', upTo: 2, knot: 'grinner' },
+      { do: 'Tie a short dropper of weaker line to the bottom eye, and the lead to that.', upTo: 3, knot: 'grinner' },
+      { do: 'Make the dropper the weakest part of the rig, so a snag costs a lead and not a fish.', upTo: 3 },
+      { do: 'Add the hook and bait it. Adjust the hook link so the bait sits just off bottom.', upTo: 5 }
+    ],
+    zig: [
+      { do: 'Work out the depth first, then set the zig at roughly two thirds of it.', upTo: 0 },
+      { do: 'Set up a lead on the mainline so it sits on the bottom.', upTo: 2 },
+      { do: 'Tie the long zig hooklink to the swivel.', upTo: 3, knot: 'grinner' },
+      { do: 'Fit a wide gape hook and a small piece of foam.', upTo: 5, knot: 'knotless' },
+      { do: 'Cast and let it settle. The rig only fishes once the lead is down and the foam has risen.', upTo: 5 }
+    ],
+    'surface-controller': [
+      { do: 'Thread the controller float onto the mainline.', upTo: 1 },
+      { do: 'Tie a swivel below it to stop the float.', upTo: 2, knot: 'palomar' },
+      { do: 'Tie 1–1.5 m of clear mono to the other end of the swivel.', upTo: 3, knot: 'grinner' },
+      { do: 'Add the hook and mount a floating bait.', upTo: 5, knot: 'grinner' },
+      { do: 'Sink the line between float and rod tip, or the carp will spook off it.', upTo: 5 }
+    ],
+    waggler: [
+      { do: 'Plumb the depth before you set anything up. Guessing costs you the session.', upTo: 0 },
+      { do: 'Thread the waggler on and lock it with shot either side.', upTo: 2 },
+      { do: 'Put roughly two thirds of the total shot round the float.', upTo: 2 },
+      { do: 'Spread a dropper and a tell-tale shot down the line below it.', upTo: 4 },
+      { do: 'Add the hooklength and hook, set dead depth, then shallow up until you find fish.', upTo: 6, knot: 'loop-loop' }
+    ],
+    stick: [
+      { do: 'Fix the stick float top and bottom with float rubbers.', upTo: 1 },
+      { do: 'Spread the shot shirt-button style down the line, biggest nearest the float.', upTo: 4 },
+      { do: 'Set the depth so the bait just trips the bottom.', upTo: 4 },
+      { do: 'Add hooklength, hook and bait.', upTo: 6, knot: 'grinner' },
+      { do: 'Hold the float back hard every few yards — the bait lifts, and that is when it goes under.', upTo: 6 }
+    ],
+    'pole-rig': [
+      { do: 'Pick a float weight to suit the depth and flow, and thread it onto the line.', upTo: 1 },
+      { do: 'Set the bulk olivette about two thirds of the way down.', upTo: 2 },
+      { do: 'Add two No.10 droppers below it.', upTo: 3 },
+      { do: 'Tie on a short hooklength and the hook.', upTo: 5, knot: 'loop-loop' },
+      { do: 'Match the elastic to the fish, not the float. Too stiff and you bump them off.', upTo: 5 }
+    ],
+    lift: [
+      { do: 'Fix a peacock quill bottom-end only, with a float rubber.', upTo: 1 },
+      { do: 'Pinch a single AAA shot about 5 cm from the hook.', upTo: 2 },
+      { do: 'Set the rig slightly over depth so the shot rests on the bottom.', upTo: 2 },
+      { do: 'Add the hook and bait.', upTo: 4, knot: 'grinner' },
+      { do: 'Tighten until the float cocks. If it lifts and lies flat, strike.', upTo: 4 }
+    ],
+    'pike-float-deadbait': [
+      { do: 'Get the unhooking kit out FIRST: mat, 12" forceps, wire cutters. No kit, no fishing.', upTo: 0 },
+      { do: 'Thread the sliding float onto the mainline, then a bead, then the running lead.', upTo: 3 },
+      { do: 'Tie a swivel below the lead.', upTo: 4, knot: 'palomar' },
+      { do: 'Clip on a 45 cm, 28 lb wire trace. Always wire — never mono.', upTo: 5 },
+      { do: 'Mount the deadbait on the two trebles, one in the tail root, one in the flank.', upTo: 7 },
+      { do: 'Set the stop knot to fish the bait just off bottom, and strike the moment the float goes.', upTo: 7, knot: 'stop-knot' }
+    ],
+    'pike-lure': [
+      { do: 'Tie the mainline to the snap link at the top of the trace.', upTo: 1, knot: 'palomar' },
+      { do: 'Use a 30 cm wire or heavy fluorocarbon trace. Pike go through anything less.', upTo: 2 },
+      { do: 'A swivel in the trace kills the line twist a spinner puts in.', upTo: 3 },
+      { do: 'Clip the lure on so you can swap it in seconds.', upTo: 4 },
+      { do: 'Crush the barbs before you start. They come out in seconds and save fish.', upTo: 4 }
+    ],
+    dropshot: [
+      { do: 'Tie the hook onto the line with a palomar, leaving a long tag end.', upTo: 1, knot: 'palomar' },
+      { do: 'Pass that tag back down through the hook eye so the hook stands out at right angles.', upTo: 1 },
+      { do: 'Nose-hook a small soft plastic.', upTo: 2 },
+      { do: 'Pinch the drop shot weight onto the tag, 20–40 cm below the hook.', upTo: 3 },
+      { do: 'Shake the rod tip while the weight stays put. That quiver is what triggers perch.', upTo: 3 }
+    ],
+    pulley: [
+      { do: 'Build the rig body from 60 lb mono with a pulley bead running on it.', upTo: 1 },
+      { do: 'Attach the grip lead on a weak rotten-bottom link.', upTo: 2 },
+      { do: 'Add the 60 cm snood and a pennell hook set.', upTo: 4, knot: 'grinner' },
+      { do: 'Bait with lug and wrap it in squid to hold it together on the cast.', upTo: 5 },
+      { do: 'On the retrieve the lead rides up and the rig comes back clear of the rough ground.', upTo: 5 }
+    ],
+    flapper: [
+      { do: 'Cut a rig body from 60 lb mono and add two crimped snood swivels.', upTo: 1 },
+      { do: 'Tie 25 cm snoods to each swivel.', upTo: 3, knot: 'grinner' },
+      { do: 'Add a lead link at the bottom.', upTo: 4 },
+      { do: 'Tie an Aberdeen hook to each snood.', upTo: 5, knot: 'grinner' },
+      { do: 'Bait both, and keep the cast smooth — flappers fly badly, so do not try to belt it.', upTo: 6 }
+    ],
+    'sea-float': [
+      { do: 'Slide a stop knot onto the mainline, then a small bead.', upTo: 1, knot: 'stop-knot' },
+      { do: 'Thread the sliding float on, then the bead below it.', upTo: 3 },
+      { do: 'Add a drilled bullet to cock the float.', upTo: 4 },
+      { do: 'Tie on a swivel to stop the weight.', upTo: 5, knot: 'palomar' },
+      { do: 'Add a 60 cm hooklength and the hook.', upTo: 7, knot: 'grinner' },
+      { do: 'Move the stop knot to change depth — that is the whole point of fishing it sliding.', upTo: 7 }
+    ],
+    'fly-dry': [
+      { do: 'Loop the tapered leader to the fly line loop.', upTo: 2, knot: 'loop-loop' },
+      { do: 'Add 2–3 ft of tippet to the leader point.', upTo: 3, knot: 'double-grinner' },
+      { do: 'Tie the fly on.', upTo: 4, knot: 'grinner' },
+      { do: 'Degrease the tippet so it sinks and stops leaving a wake.', upTo: 4 }
+    ],
+    'fly-nymph': [
+      { do: 'Loop the tapered leader to the fly line.', upTo: 2, knot: 'loop-loop' },
+      { do: 'Tie on the buoyant dry fly that will act as your indicator.', upTo: 3, knot: 'grinner' },
+      { do: 'Tie 60–120 cm of tippet to the BEND of the dry fly hook.', upTo: 4, knot: 'grinner' },
+      { do: 'Add the weighted nymph on the end.', upTo: 5, knot: 'grinner' },
+      { do: 'Set the dropper to about one and a half times the water depth in fast runs.', upTo: 5 }
+    ]
+  };
+
+  RIGS.forEach((r) => { r.steps = RIG_STEPS[r.id] || []; });
+
   /* ------------------------------------------------------------------- species */
 
   /* season: 12 characters, Jan → Dec. 0 off, 1 possible, 2 good, 3 prime.
@@ -1601,9 +1929,10 @@
   };
 
   G.data = {
-    LICENCE, REGIONS, CLOSE_SEASON, RIGS, RIG_PARTS, SPECIES, VENUES, FACILITIES, WATER_TYPES,
+    LICENCE, REGIONS, CLOSE_SEASON, RIGS, RIG_PARTS, KNOTS, SPECIES, VENUES, FACILITIES, WATER_TYPES,
     species: (id) => SPECIES.find((s) => s.id === id) || null,
     rig: (id) => RIGS.find((r) => r.id === id) || null,
+    knot: (id) => KNOTS.find((k) => k.id === id) || null,
     facility: (id) => FACILITIES.find((f) => f.id === id) || null
   };
 })(window.Cast = window.Cast || {});

@@ -84,6 +84,13 @@ where to fish today, what it will legally cost, and what to put on the end of th
   - **Rig** — a labelled diagram, drawn as SVG, not a photo. Diagrams should be
     generated from a shared component vocabulary (line, swivel, bead, lead, feeder,
     float, hooklength, hook, bait) so every rig is drawn in one consistent visual language.
+  - **How to tie it** — numbered steps for building the rig, each with its own picture:
+    the same diagram drawn with only the components fitted so far, the newest ones picked
+    out, so the illustration builds up as you work down the instructions. Steps must never
+    show fewer components than the step before.
+  - **The knots** — a step-by-step drawn guide to every knot the rigs call for, tappable
+    from the step that needs it. Draw them as staged SVG illustrations with proper
+    over/under crossings, not photographs, and give each one its rough breaking strain.
   - **Terminal tackle** — hook size, line and hooklength breaking strain.
   - **Baits** — top three, ranked, with a one-line "why this, now".
   - **Where and how** — depth, swim choice, and how to fish it.

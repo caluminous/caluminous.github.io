@@ -2,7 +2,7 @@
 (function (G) {
   'use strict';
 
-  const { h, esc, icon, starsHtml, starPicker, scoreRing, rigCard, facilityRow, bandClass, toast } = G.ui;
+  const { h, esc, icon, starsHtml, starPicker, scoreRing, rigCard, knotCard, facilityRow, bandClass, toast } = G.ui;
   const store = G.store;
   const T = G.tactics;
   const money = T.money;
@@ -861,7 +861,7 @@
     /* rigs */
     const rigs = h('section', { class: 'card' });
     rigs.appendChild(h('h3', { text: 'Rigs' }));
-    tac.rigs.forEach((rg, i) => rigs.appendChild(rigCard(rg, { open: i === 0 })));
+    tac.rigs.forEach((rg, i) => rigs.appendChild(rigCard(rg, { open: i === 0, onKnot: showKnot })));
     root.appendChild(rigs);
 
     root.appendChild(h('div', { class: 'btn-row pad' }, [
@@ -872,11 +872,26 @@
 
   /* ------------------------------------------------------------- view: rigs */
 
-  function rigsView(root) {
-    root.appendChild(h('h2', { class: 'page-title', text: 'Rigs' }));
-    root.appendChild(h('p', { class: 'muted pad-x', text: 'Every rig the app recommends, drawn the same way so you can compare them.' }));
+  function rigsView(root, r) {
+    const tab = r.query.get('tab') === 'knots' ? 'knots' : 'rigs';
+    root.appendChild(h('h2', { class: 'page-title', text: tab === 'knots' ? 'Knots' : 'Rigs' }));
 
-    const search = h('input', { class: 'search', type: 'search', placeholder: 'Search rigs', 'aria-label': 'Search rigs' });
+    root.appendChild(h('div', { class: 'controls' }, [
+      h('div', { class: 'seg', role: 'group', 'aria-label': 'Rigs or knots' }, [
+        h('button', { class: 'seg-btn' + (tab === 'rigs' ? ' is-on' : ''), text: 'Rigs',
+          onclick: () => go('#/rigs') }),
+        h('button', { class: 'seg-btn' + (tab === 'knots' ? ' is-on' : ''), text: 'Knots',
+          onclick: () => go('#/rigs?tab=knots') })
+      ])
+    ]));
+
+    root.appendChild(h('p', { class: 'muted pad-x small', text: tab === 'knots'
+      ? 'The knots the rigs are built from, drawn stage by stage.'
+      : 'Every rig the app recommends, with a diagram and step-by-step tying instructions.' }));
+
+    const search = h('input', { class: 'search', type: 'search',
+      placeholder: tab === 'knots' ? 'Search knots' : 'Search rigs',
+      'aria-label': tab === 'knots' ? 'Search knots' : 'Search rigs' });
     root.appendChild(search);
 
     const listWrap = h('div', { class: 'card' });
@@ -885,12 +900,37 @@
     function paint(term) {
       listWrap.innerHTML = '';
       const t = (term || '').toLowerCase();
+      if (tab === 'knots') {
+        const knots = G.data.KNOTS.filter((k) => !t || k.name.toLowerCase().includes(t) || k.use.toLowerCase().includes(t));
+        if (!knots.length) { listWrap.appendChild(h('p', { class: 'muted', text: 'No knots match that.' })); return; }
+        knots.forEach((k) => listWrap.appendChild(knotCard(k)));
+        return;
+      }
       const rigs = G.data.RIGS.filter((rg) => !t || rg.name.toLowerCase().includes(t) || rg.use.toLowerCase().includes(t));
       if (!rigs.length) { listWrap.appendChild(h('p', { class: 'muted', text: 'No rigs match that.' })); return; }
-      rigs.forEach((rg) => listWrap.appendChild(rigCard(rg)));
+      rigs.forEach((rg) => listWrap.appendChild(rigCard(rg, { onKnot: showKnot })));
     }
     search.addEventListener('input', () => paint(search.value));
     paint('');
+  }
+
+  /* A knot referenced from a tying step opens over the rig rather than navigating away —
+     you are usually holding line in one hand when you tap it. */
+  function showKnot(k) {
+    const sheet = h('div', { class: 'sheet-backdrop', onclick: (e) => { if (e.target === sheet) sheet.remove(); } });
+    const panel = h('div', { class: 'sheet' });
+    panel.appendChild(h('div', { class: 'sheet-head' }, [
+      h('h3', { text: k.name }),
+      h('button', { class: 'icon-btn', 'aria-label': 'Close', html: icon('close', 18), onclick: () => sheet.remove() })
+    ]));
+    const body = h('div', { class: 'sheet-body' });
+    body.appendChild(knotCard(k, { open: true }));
+    panel.appendChild(body);
+    panel.appendChild(h('div', { class: 'btn-row sheet-foot' }, [
+      h('button', { class: 'btn primary', text: 'Done', onclick: () => sheet.remove() })
+    ]));
+    sheet.appendChild(panel);
+    document.body.appendChild(sheet);
   }
 
   /* -------------------------------------------------------------- view: log */

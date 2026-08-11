@@ -581,6 +581,81 @@ details.card[open] > summary::after { content: '−'; }
 .g-fly-wing { fill: rgba(200,220,230,.5); stroke: #e2edf2; stroke-width: .9; }
 .g-clip { fill: none; stroke: #cfdde4; stroke-width: 1.4; }
 
+/* ----------------------------------------------- tying steps and knot art */
+
+.tie-block { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.tie-block > summary {
+  cursor: pointer; list-style: none; font-size: .86rem; font-weight: 600;
+  display: flex; align-items: center; gap: 6px; padding: 4px 0; min-height: 34px;
+}
+.tie-block > summary::-webkit-details-marker { display: none; }
+.tie-block > summary::after { content: '＋'; margin-left: auto; color: var(--muted); }
+.tie-block[open] > summary::after { content: '−'; }
+
+.tie-steps { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.tie-step {
+  display: grid;
+  grid-template-columns: 22px 84px 1fr;
+  gap: 10px; align-items: center;
+  padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.05);
+}
+.tie-num {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent-dim); color: #eafffb;
+  font-size: .74rem; font-weight: 700;
+}
+.tie-art { background: #0d181d; border-radius: 8px; padding: 3px; }
+.rig-thumb { display: block; width: 100%; height: auto; }
+.rig-thumb .is-done { opacity: .38; }
+.rig-thumb .is-new { opacity: 1; }
+.tie-text p { margin: 0; font-size: .86rem; line-height: 1.45; }
+
+.knot-link {
+  appearance: none; cursor: pointer; margin-top: 6px;
+  display: inline-flex; align-items: center; gap: 5px;
+  background: rgba(72,201,176,.12); border: 1px solid var(--accent-dim);
+  color: var(--accent); font: inherit; font-size: .76rem;
+  padding: 4px 9px; border-radius: 20px; min-height: 30px;
+}
+
+.knot-card { border: 1px solid var(--line); border-radius: 11px; margin-bottom: 8px; background: var(--card-2); }
+.knot-card > summary { cursor: pointer; padding: 10px 12px; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.knot-card > summary::-webkit-details-marker { display: none; }
+.knot-body { padding: 0 12px 12px; }
+.knot-strength { display: flex; align-items: center; gap: 6px; font-size: .8rem; color: var(--muted); margin: 0 0 8px; }
+.knot-note { display: flex; gap: 7px; align-items: flex-start; font-size: .82rem; color: var(--muted); margin: 8px 0 0; }
+.knot-note .icon { flex: none; margin-top: 2px; }
+
+.knot-stages { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.knot-stage {
+  display: grid; grid-template-columns: 22px 1fr; gap: 8px 10px; align-items: start;
+  background: #0d181d; border-radius: 9px; padding: 9px 10px;
+}
+.knot-num {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,.09); color: var(--text);
+  font-size: .74rem; font-weight: 700;
+}
+.knot-art { grid-column: 2; }
+.knot-cap { grid-column: 2; margin: 0; font-size: .84rem; line-height: 1.45; }
+.knot-svg { display: block; width: 100%; max-width: 300px; height: auto; }
+
+/* The casing is painted in the diagram's own background colour, so wherever one strand
+   crosses another the strand drawn later cuts a clean gap in the one beneath. */
+.k-casing { fill: none; stroke: #0d181d; stroke-width: 7; stroke-linecap: round; }
+.k-casing-wide { stroke-width: 10; }
+.k-line { fill: none; stroke: #cfe2ea; stroke-width: 2.4; stroke-linecap: round; }
+.k-double { fill: none; stroke: #cfe2ea; stroke-width: 4.6; stroke-linecap: round; }
+.k-tag { fill: none; stroke: #9ab4c0; stroke-width: 2; stroke-linecap: round; stroke-dasharray: 7 4; }
+.k-eye { fill: none; stroke: #e2edf2; stroke-width: 2.4; }
+.k-hook { fill: none; stroke: #e2edf2; stroke-width: 2.6; stroke-linecap: round; }
+.k-coil { fill: none; stroke: #7fd4c4; stroke-width: 2.2; }
+.k-arrow { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-dasharray: 4 3; }
+.k-arrowhead { fill: var(--accent); }
+.k-label { fill: #8fa8b4; font-size: 10px; font-family: system-ui, sans-serif; }
+
 /* ------------------------------------------------------------------ forms */
 
 .form { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }

@@ -163,9 +163,13 @@
     line: (x, y) => `<circle class="g-bead" cx="${x}" cy="${y}" r="3"/>`
   };
 
-  function rigDiagramHtml(rig) {
+  /* `upTo` draws only the first n components, so a sequence of these reads as the rig
+     being built up step by step. `plain` drops the labels for the small step thumbnails. */
+  function rigDiagramHtml(rig, opts = {}) {
     const L = LAYOUTS[rig.style] || LAYOUTS.ledger;
-    const parts = [...rig.parts].sort((a, b) => a.p - b.p);
+    let parts = [...rig.parts].sort((a, b) => a.p - b.p);
+    if (opts.upTo != null) parts = parts.slice(0, opts.upTo);
+    if (opts.plain) return rigThumbHtml(rig, L, parts, opts.highlightFrom);
 
     let svg = `<svg class="rig-svg" viewBox="0 0 ${W} ${HGT}" role="img" aria-label="${esc(rig.name)} diagram">`;
 
@@ -199,7 +203,113 @@
     return svg;
   }
 
-  function rigCard(rig, { open = false } = {}) {
+  /* Label-free thumbnail of the rig so far, with the newly added components picked out.
+     Narrow viewBox because there is no label column to make room for. */
+  function rigThumbHtml(rig, L, parts, highlightFrom) {
+    const TW = 150;
+    let svg = `<svg class="rig-thumb" viewBox="0 0 ${TW} ${HGT}" aria-hidden="true">`;
+    svg += `<rect class="rig-water-fill" x="0" y="${L.water}" width="${TW}" height="${HGT - L.water}"/>`;
+    svg += `<path class="rig-water" d="M0 ${L.water} q12 -5 24 0 t24 0 t24 0 t24 0 t24 0 t24 0 t24 0"/>`;
+    if (L.bed != null) {
+      svg += `<path class="rig-bed" d="M0 ${L.bed} q18 -7 36 -2 t36 3 t36 -4 t36 2 t36 -3 L${TW} ${HGT} L0 ${HGT} z"/>`;
+    }
+    svg += `<path class="rig-line" d="M${L.p0[0]} ${L.p0[1]} Q${L.p1[0]} ${L.p1[1]} ${L.p2[0]} ${L.p2[1]}"/>`;
+    parts.forEach((part, i) => {
+      const [x, y] = bez(L, Math.max(0, Math.min(1, part.p)));
+      const isNew = highlightFrom != null && i >= highlightFrom;
+      svg += `<g class="${isNew ? 'is-new' : 'is-done'}">${(GLYPH[part.t] || GLYPH.bead)(x, y)}</g>`;
+    });
+    svg += '</svg>';
+    return svg;
+  }
+
+  /* ------------------------------------------------------- knot illustrations */
+
+  /* Every `line` is stroked twice — a background-coloured casing, then the line itself —
+     so a strand drawn later visibly passes over the one beneath. That single trick is
+     what turns a tangle of curves into a readable knot. */
+  const KNOT_ART = {
+    line: (p) => `<path class="k-casing" d="${p.d}"/><path class="${p.tag ? 'k-tag' : 'k-line'}" d="${p.d}"/>`,
+    double: (p) => `<path class="k-casing k-casing-wide" d="${p.d}"/><path class="k-double" d="${p.d}"/>`,
+    eye: (p) => `<circle class="k-casing" cx="${p.x}" cy="${p.y}" r="${(p.r || 9) + 2}"/>
+                 <circle class="k-eye" cx="${p.x}" cy="${p.y}" r="${p.r || 9}"/>`,
+    hook: (p) => {
+      const s = p.big ? 1.5 : 1;
+      return `<path class="k-casing" d="M${p.x} ${p.y} v${34 * s} a${13 * s} ${13 * s} 0 1 0 ${15 * s} -${3 * s}"/>
+              <path class="k-hook" d="M${p.x} ${p.y} v${34 * s} a${13 * s} ${13 * s} 0 1 0 ${15 * s} -${3 * s}"/>
+              <path class="k-hook" d="M${p.x + 15 * s} ${p.y + 31 * s} l${6 * s} ${8 * s}"/>
+              <circle class="k-eye" cx="${p.x}" cy="${p.y}" r="${5 * s}"/>`;
+    },
+    /* A run of small ellipses reads as line wrapped round line. */
+    coil: (p) => {
+      let out = '';
+      for (let i = 0; i < p.n; i++) {
+        const cx = p.vertical ? p.x : p.x + i * p.step;
+        const cy = p.vertical ? p.y + i * p.step : p.y;
+        out += `<ellipse class="k-coil" cx="${cx}" cy="${cy}" rx="${p.vertical ? 9 : 4.5}" ry="${p.vertical ? 4 : 9}"/>`;
+      }
+      return out;
+    },
+    arrow: (p) => `<path class="k-arrow" d="${p.d}" marker-end="url(#kArrow)"/>`,
+    label: (p) => `<text class="k-label" x="${p.x}" y="${p.y}">${esc(p.text)}</text>`
+  };
+
+  function knotStageHtml(stage, index) {
+    let svg = `<svg class="knot-svg" viewBox="0 0 200 108" role="img" aria-label="Step ${index + 1}: ${esc(stage.cap)}">`;
+    svg += `<defs><marker id="kArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+              <path d="M0 1 L9 5 L0 9 z" class="k-arrowhead"/></marker></defs>`;
+    for (const part of stage.art) svg += (KNOT_ART[part.t] || (() => ''))(part);
+    svg += '</svg>';
+    return `<li class="knot-stage"><span class="knot-num">${index + 1}</span>
+              <div class="knot-art">${svg}</div>
+              <p class="knot-cap">${esc(stage.cap)}</p></li>`;
+  }
+
+  function knotCard(knot, { open = false } = {}) {
+    const card = h('details', { class: 'knot-card', open, id: 'knot-' + knot.id });
+    card.appendChild(h('summary', {}, [
+      h('span', { class: 'rig-name', text: knot.name }),
+      h('span', { class: 'rig-use', text: knot.use })
+    ]));
+    const body = h('div', { class: 'knot-body' });
+    body.appendChild(h('p', { class: 'knot-strength', html:
+      `${icon('gauge', 14)} <span>Holds roughly <strong>${esc(knot.strength)}</strong> of the line’s breaking strain</span>` }));
+    body.appendChild(h('ol', { class: 'knot-stages', html: knot.stages.map(knotStageHtml).join('') }));
+    if (knot.notes) body.appendChild(h('p', { class: 'knot-note', html: icon('info', 14) + '<span>' + esc(knot.notes) + '</span>' }));
+    card.appendChild(body);
+    return card;
+  }
+
+  /* The build-it-up panel: one numbered step, one thumbnail, and the knot it needs. */
+  function tyingSteps(rig, onKnot) {
+    const wrap = h('div', { class: 'tie-steps' });
+    if (!rig.steps || !rig.steps.length) return wrap;
+
+    let shown = 0;
+    rig.steps.forEach((step, i) => {
+      const upTo = step.upTo != null ? step.upTo : shown;
+      const row = h('div', { class: 'tie-step' });
+      row.innerHTML = `
+        <span class="tie-num">${i + 1}</span>
+        <div class="tie-art">${rigDiagramHtml(rig, { upTo, plain: true, highlightFrom: shown })}</div>
+        <div class="tie-text"><p>${esc(step.do)}</p></div>`;
+      if (step.knot) {
+        const k = G.data.knot(step.knot);
+        if (k) {
+          row.querySelector('.tie-text').appendChild(h('button', {
+            class: 'knot-link', type: 'button',
+            html: icon('info', 13) + `<span>${esc(k.name)}</span>`,
+            onclick: () => onKnot && onKnot(k)
+          }));
+        }
+      }
+      shown = Math.max(shown, upTo);
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
+  function rigCard(rig, { open = false, onKnot = null } = {}) {
     const card = h('details', { class: 'rig-card', open });
     card.appendChild(h('summary', {}, [
       h('span', { class: 'rig-name', text: rig.name }),
@@ -207,6 +317,14 @@
     ]));
     const body = h('div', { class: 'rig-body' });
     body.appendChild(h('div', { class: 'rig-diagram', html: rigDiagramHtml(rig) }));
+
+    if (rig.steps && rig.steps.length) {
+      const how = h('details', { class: 'tie-block' });
+      how.appendChild(h('summary', { html: icon('book', 15) + '<span>How to tie it</span>' }));
+      how.appendChild(tyingSteps(rig, onKnot));
+      body.appendChild(how);
+    }
+
     if (rig.tips && rig.tips.length) {
       body.appendChild(h('ul', { class: 'rig-tips' }, rig.tips.map((t) => h('li', { text: t }))));
     }
@@ -253,5 +371,6 @@
     }, 4200);
   }
 
-  G.ui = { h, esc, icon, starsHtml, starPicker, scoreRing, rigDiagramHtml, rigCard, chip, facilityRow, bandClass, toast };
+  G.ui = { h, esc, icon, starsHtml, starPicker, scoreRing, rigDiagramHtml, rigCard,
+           knotCard, tyingSteps, chip, facilityRow, bandClass, toast };
 })(window.Cast = window.Cast || {});

@@ -36,6 +36,12 @@ reasoning shown so you can disagree with it.
 **Shows you how to catch it.** Hook size, line, ranked baits, and rig diagrams — 20 of them,
 all generated from a shared component vocabulary so they read the same way.
 
+**Shows you how to tie it.** Every rig has numbered tying steps, and every step has its own
+picture: the rig drawn with just the components fitted so far, the newest ones picked out, so
+the diagram builds up as you work down the list. Where a step needs a knot, it links to a
+staged illustration of that knot — 10 of them, drawn with real over/under crossings so they
+read as knots rather than tangles.
+
 **Logs your catches** with the conditions at the time, and tells you which of your baits
 is actually working.
 
@@ -50,12 +56,12 @@ worker so a map you've already looked at still works on the bank with no signal.
 
 | File | What's in it |
 | --- | --- |
-| `data.js` | Licence prices and rules, close season, 32 species, 20 rig specs, 131 seed venues |
+| `data.js` | Licence prices and rules, close season, 32 species, 20 rigs with tying steps, 10 knots, 131 seed venues |
 | `store.js` | localStorage state, ratings, corrections, catch log, network cache |
 | `geo.js` | Geolocation, postcodes.io, Overpass discovery and name search, Open-Meteo, distance |
 | `tactics.js` | Conditions, bite score, species likelihood, cost and legality |
 | `map.js` | The slippy map |
-| `ui.js` | Icons, stars, score rings, the rig diagram engine |
+| `ui.js` | Icons, stars, score rings, the rig diagram and knot illustration engines |
 | `app.js` | Views and routing |
 | `sw.js` | Offline shell and tile cache |
 
