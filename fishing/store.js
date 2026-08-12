@@ -21,6 +21,7 @@
       types: [],                /* empty = all */
       maxPrice: null,
       minRating: 0,
+      intent: null,             /* null | numbers | specimen | wild | game */
       facilities: [],
       fishableOnly: false,
       includeOsm: true

@@ -1919,6 +1919,81 @@
       'Long, clean sand beach with easy access from the city.', null)
   ];
 
+  /* ----------------------------------------------------------- venue character */
+
+  /* What a water is actually FOR. "Where do I go to catch a lot" and "where do I go for a
+     big one" are different questions with different answers, and a star rating answers
+     neither. Each venue gets one of these. */
+  const CHARACTER = {
+    numbers: {
+      label: 'Bags of fish', short: 'Numbers',
+      blurb: 'Come here to catch plenty. Steady bites, mostly modest fish, and hard to blank.',
+      colour: '#4cc38a'
+    },
+    specimen: {
+      label: 'Big fish water', short: 'Specimen',
+      blurb: 'Come here for one big one. Long waits, few bites, and a real fish when it happens.',
+      colour: '#d98a5b'
+    },
+    mixed: {
+      label: 'Mixed', short: 'Mixed',
+      blurb: 'A bit of everything — enough bites to stay interested, with the odd better fish.',
+      colour: '#3fa7d6'
+    },
+    wild: {
+      label: 'Wild and quiet', short: 'Wild',
+      blurb: 'Natural, unstocked and moody. Harder fishing, better surroundings, nothing guaranteed.',
+      colour: '#8e9fd6'
+    },
+    game: {
+      label: 'Stocked game', short: 'Game',
+      blurb: 'Stocked trout on fly gear. Reliable sport, and the stock level sets the standard.',
+      colour: '#c9a227'
+    }
+  };
+
+  /* Explicit where the water has a clear reputation. Everything else is derived below
+     from what we do know — type, stock rating and species — rather than guessed at. */
+  const CHARACTER_OF = {
+    /* famous big-fish waters */
+    linear: 'specimen', 'bluebell-lakes': 'specimen', 'anglers-paradise': 'specimen',
+    walthamstow: 'specimen', chew: 'specimen', blithfield: 'specimen', 'loch-ken': 'specimen',
+    'loch-awe': 'specimen', esthwaite: 'specimen', llandegfedd: 'specimen', 'avon-royalty': 'specimen',
+    'wye-hereford': 'specimen', 'trent-newark': 'specimen', 'severn-bewdley': 'specimen',
+    'drayton-res': 'specimen', 'llangorse': 'specimen', 'hornsea-mere': 'specimen',
+    /* bite-a-chuck commercials and match complexes */
+    'tunnel-barn': 'numbers', makins: 'numbers', partridge: 'numbers', lindholme: 'numbers',
+    barston: 'numbers', viaduct: 'numbers', larford: 'numbers', 'white-acres': 'numbers',
+    todber: 'numbers', 'monk-lakes': 'numbers', summerhayes: 'numbers', earlswood: 'numbers',
+    cudmore: 'numbers', 'marsh-farm': 'numbers', twynersh: 'numbers',
+    /* wild, natural or unstocked */
+    'loch-lomond': 'wild', 'loch-ness': 'wild', 'loch-tay': 'wild', windermere: 'wild',
+    coniston: 'wild', ullswater: 'wild', colliford: 'wild', 'llyn-tegid': 'wild',
+    'usk-abergavenny': 'wild', 'tweed-kelso': 'wild', 'spey-aberlour': 'wild',
+    'tay-perth': 'wild', 'tyne-hexham': 'wild', kielder: 'wild'
+  };
+
+  function characterOf(venue) {
+    if (venue.character) return venue.character;
+    if (CHARACTER_OF[venue.id]) return CHARACTER_OF[venue.id];
+    if (venue.type === 'coastal') return 'wild';
+
+    /* Predominantly a trout water is a game fishery, even where it also holds coarse fish.
+       A big stocked reservoir is not a "bags of fish" commercial, whatever its stock score. */
+    const GAME = ['rainbow-trout', 'brown-trout', 'grayling', 'salmon', 'sea-trout'];
+    const sp = venue.species || [];
+    if (sp.length && sp.filter((s) => GAME.includes(s)).length / sp.length >= 0.5) return 'game';
+
+    if (venue.type === 'river' || venue.type === 'canal') return 'mixed';
+
+    const stock = venue.breakdown && venue.breakdown.stock;
+    /* "Numbers" means a heavily stocked commercial pool, so it is reserved for stillwaters. */
+    if (venue.type === 'stillwater' && stock >= 5) return 'numbers';
+    if (stock >= 4) return 'mixed';
+    if (stock != null) return 'wild';
+    return null;   /* unknown — an OSM water we know nothing about */
+  }
+
   /* Water-type presentation. Colours are also used for the map pins. */
   const WATER_TYPES = {
     stillwater: { label: 'Stillwater', colour: '#3fa7d6', short: 'Lake' },
@@ -1929,7 +2004,8 @@
   };
 
   G.data = {
-    LICENCE, REGIONS, CLOSE_SEASON, RIGS, RIG_PARTS, KNOTS, SPECIES, VENUES, FACILITIES, WATER_TYPES,
+    LICENCE, REGIONS, CLOSE_SEASON, RIGS, RIG_PARTS, KNOTS, SPECIES, VENUES, FACILITIES,
+    WATER_TYPES, CHARACTER, characterOf,
     species: (id) => SPECIES.find((s) => s.id === id) || null,
     rig: (id) => RIGS.find((r) => r.id === id) || null,
     knot: (id) => KNOTS.find((k) => k.id === id) || null,

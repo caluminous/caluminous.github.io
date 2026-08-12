@@ -19,6 +19,13 @@ in the country.
 built-in list answers instantly and nationwide; one tap widens the search to every named
 water in OpenStreetMap.
 
+**Tells you where to go for what you want.** "Catch a lot" and "catch a big one" are
+different questions, and a star rating answers neither. Every water carries a character —
+bags of fish, big-fish water, mixed, wild and quiet, or stocked game — badged on the list
+and explained on the venue page, with a one-tap chooser that reorders results around what
+you're actually after. It's derived from type, stock and species where it isn't explicitly
+known, and left blank for waters nothing is known about.
+
 **Tells you what today costs.** A "Before you cast" panel per venue that adds the rod
 licence you actually need to the venue's day ticket and gives you one number. It knows the
 rules differ across the UK — the Environment Agency licence in England and Wales, no rod
@@ -64,6 +71,16 @@ worker so a map you've already looked at still works on the bank with no signal.
 | `ui.js` | Icons, stars, score rings, the rig diagram and knot illustration engines |
 | `app.js` | Views and routing |
 | `sw.js` | Offline shell and tile cache |
+
+## When OpenStreetMap doesn't answer
+
+Overpass is free, shared and heavily rate-limited, so the app treats failure as normal. The
+lookup is split in two: a cheap query for things explicitly tagged as fished, and a much
+heavier one for every named lake, river and canal. The first paints as soon as it lands, so a
+slow second query can't take the fisheries down with it. Client timeouts are set *longer*
+than the server-side query timeout, four mirrors are tried before giving up, and a failure
+is always shown with a retry rather than looking like an empty map. **You → Nearby-water
+search: what happened** shows exactly what the last search did.
 
 ## Data sources
 
