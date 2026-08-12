@@ -52,6 +52,27 @@ where to fish today, what it will legally cost, and what to put on the end of th
   is on the bank.
 - Filters: water type, maximum day-ticket price, minimum rating, facilities, and
   "hide venues I can't fish today".
+- **Ask what kind of session they want, not just where they are.** "Where do I go to catch
+  a lot" and "where do I go for a big one" are different questions and a star rating answers
+  neither. Every water carries a character — bags of fish, big-fish water, mixed, wild and
+  quiet, or stocked game — shown as a badge on the list and explained on the venue page, with
+  a one-tap chooser that reorders the results around what the angler is actually after.
+  Derive it from what's known (type, stock, species) rather than inventing it, and leave it
+  blank for waters nothing is known about instead of guessing.
+
+### 1a. When the data source fails, say so
+
+Nearby discovery leans on a free, shared, heavily rate-limited service. Treat that as the
+normal case, not the exception:
+
+- Split the lookup so the cheap "explicitly tagged as fished" query is separate from the
+  expensive "every named water" one, and paint results as soon as the first lands. A slow
+  second query must never take the fisheries down with it.
+- Give the client a longer timeout than the server-side query timeout — aborting first means
+  the server was never allowed the time its own query asked for.
+- Try several mirrors before giving up.
+- Never present a failed lookup as an empty map. Say which part failed, offer a retry, and
+  keep a plain-English diagnostics panel showing what the last search actually did.
 
 ### 2. Licences and cost
 

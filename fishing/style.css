@@ -326,9 +326,9 @@ details.card[open] > summary::after { content: '−'; }
 /* ------------------------------------------------------------------- map */
 
 .map-section { position: relative; margin: 0 12px 12px; }
-/* Sized so the map fills what is left of the screen under the header, pill and controls,
-   instead of being pushed below the fold. */
-#mapHost { height: calc(100dvh - 268px); min-height: 300px; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); }
+/* Sized so the map fills what is left of the screen under the header, search, conditions
+   pill, intent bar and controls, instead of being pushed below the fold. */
+#mapHost { height: calc(100dvh - 318px); min-height: 280px; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); }
 
 .cond-pill {
   appearance: none; cursor: pointer; text-align: left;
@@ -580,6 +580,43 @@ details.card[open] > summary::after { content: '−'; }
 .g-blade { fill: #b9c9d1; stroke: #e6f0f4; stroke-width: 1; }
 .g-fly-wing { fill: rgba(200,220,230,.5); stroke: #e2edf2; stroke-width: .9; }
 .g-clip { fill: none; stroke: #cfdde4; stroke-width: 1.4; }
+
+/* --------------------------------------------------- intent and character */
+
+.intent-bar { display: flex; gap: 6px; overflow-x: auto; padding: 0 12px 10px; scrollbar-width: none; }
+.intent-bar::-webkit-scrollbar { display: none; }
+.intent-btn {
+  appearance: none; cursor: pointer; flex: none;
+  font: inherit; font-size: .82rem; font-weight: 550;
+  padding: 0 13px; min-height: 38px; border-radius: 20px;
+  border: 1px solid var(--line); background: var(--card); color: var(--muted);
+  white-space: nowrap;
+}
+.intent-btn.is-on {
+  color: var(--text);
+  border-color: var(--chip, var(--accent));
+  background: color-mix(in srgb, var(--chip, #48c9b0) 24%, var(--card));
+}
+
+.char-badge {
+  font-size: .68rem; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 5px;
+  color: var(--chip); border: 1px solid var(--chip);
+  background: color-mix(in srgb, var(--chip) 13%, transparent);
+}
+
+.char-line {
+  display: flex; flex-direction: column; gap: 2px;
+  margin: 10px 0 0; padding: 9px 11px;
+  border-left: 3px solid var(--chip);
+  border-radius: 0 9px 9px 0;
+  background: color-mix(in srgb, var(--chip) 9%, transparent);
+}
+.char-line strong { color: var(--chip); font-size: .88rem; }
+.char-line span { font-size: .85rem; }
+
+.diag-row { display: flex; justify-content: space-between; gap: 10px; font-size: .84rem; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,.05); }
+.diag-row .ok-line, .diag-row .warn-line { text-align: right; }
 
 /* ----------------------------------------------- tying steps and knot art */
 

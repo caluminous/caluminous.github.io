@@ -18,6 +18,9 @@
     searching: false,
     osmStale: false,
     osmError: null,
+    osmPartial: null,
+    osmLoading: false,
+    osmDiag: null,      /* what the last Overpass call actually did, shown in You */
     loading: false,
     weatherStale: false,
     mapMode: false,
@@ -40,11 +43,19 @@
 
   /* An OSM way called "Grand Union Canal" 400 m from the seeded entry for the same canal
      is the same water. Drop the duplicate rather than showing both. */
+  /* Words that say what a water IS rather than which water it is. Matching on these made
+     "Thorpe Fishery" look like a duplicate of "Twynersh Fishery" half a mile away. */
+  const GENERIC_WORDS = new Set(['fishery', 'fisheries', 'lake', 'lakes', 'pool', 'pools', 'pond',
+    'ponds', 'water', 'waters', 'reservoir', 'river', 'canal', 'mere', 'loch', 'llyn', 'park',
+    'farm', 'fishing', 'angling', 'club', 'match', 'north', 'south', 'east', 'west', 'upper', 'lower']);
+
   function dedupe(seedList, osmList) {
-    const tokens = (s) => new Set(String(s).toLowerCase().replace(/[^a-z ]/g, ' ').split(/\s+/).filter((w) => w.length > 3));
+    const tokens = (s) => new Set(String(s).toLowerCase().replace(/[^a-z ]/g, ' ').split(/\s+/)
+      .filter((w) => w.length > 3 && !GENERIC_WORDS.has(w)));
     return osmList.filter((o) => !seedList.some((s) => {
       if (G.geo.haversineMiles(o, s) > 1.2) return false;
       const a = tokens(o.name), b = tokens(s.name);
+      if (!a.size || !b.size) return false;   /* nothing distinctive to compare */
       for (const t of a) if (b.has(t)) return true;
       return false;
     }));
@@ -82,11 +93,27 @@
     if (f.types.length) list = list.filter((v) => f.types.includes(v.type));
     if (f.maxPrice != null) list = list.filter((v) => v.ticket != null && v.ticket <= f.maxPrice);
     if (f.minRating) list = list.filter((v) => (T.ratingFor(v).display || 0) >= f.minRating);
+    /* The intent filter keeps unknown-character waters rather than hiding them — an OSM
+       pond we know nothing about might be exactly what you want. It just sorts lower. */
+    if (f.intent) list = list.filter((v) => {
+      const c = G.data.characterOf(v);
+      return c === null || c === f.intent || (f.intent === 'numbers' && c === 'mixed');
+    });
     if (f.facilities.length) list = list.filter((v) => f.facilities.every((id) => (v.facilities || []).includes(id)));
     if (f.fishableOnly) list = list.filter((v) => v.fishable);
 
     const sort = store.state.sortBy;
     list.sort((a, b) => {
+      /* With an intent chosen, waters that match it come first — a known match beats an
+         unknown, and both beat a near-miss. Distance still breaks the tie. */
+      if (f.intent) {
+        const rank = (v) => {
+          const c = G.data.characterOf(v);
+          return c === f.intent ? 0 : c === null ? 2 : 1;
+        };
+        const d = rank(a) - rank(b);
+        if (d) return d;
+      }
       if (sort === 'rating') return (T.ratingFor(b).display || 0) - (T.ratingFor(a).display || 0);
       if (sort === 'price') {
         const pa = a.ticket == null ? 1e6 : a.ticket, pb = b.ticket == null ? 1e6 : b.ticket;
@@ -160,15 +187,45 @@
 
   async function loadOsm() {
     if (!A.location || !store.state.filters.includeOsm) return;
+    A.osmLoading = true;
     try {
-      const res = await G.geo.discoverVenues(A.location.lat, A.location.lon, store.state.radiusMiles);
+      const res = await G.geo.discoverVenues(A.location.lat, A.location.lon, store.state.radiusMiles, {
+        /* Paint the fisheries the moment they arrive, rather than waiting on the much
+           heavier all-water query that may never come back. */
+        onPartial: (partial) => {
+          A.osm = partial.venues;
+          A.osmDiag = partial.diag;
+          A.osmError = null;
+          render();
+        }
+      });
       A.osm = res.venues;
       A.osmStale = res.stale;
+      A.osmDiag = res.diag;
       A.osmError = null;
+      /* Half a result is still worth saying out loud, whichever half went missing. */
+      const dg = res.diag || {};
+      A.osmPartial =
+        dg.water && dg.water.ok === false ? 'Only the fishing-tagged waters loaded — the wider lakes-and-rivers search did not answer.'
+        : dg.fishing && dg.fishing.ok === false ? 'Lakes and rivers loaded, but the search for tagged fishing spots did not answer.'
+        : null;
     } catch (e) {
       A.osm = [];
-      A.osmError = 'Could not reach OpenStreetMap — showing the built-in venues only.';
+      A.osmDiag = e.diag || null;
+      A.osmPartial = null;
+      A.osmError = 'Could not reach OpenStreetMap, so only the built-in venues are listed.';
+    } finally {
+      A.osmLoading = false;
     }
+  }
+
+  async function retryOsm() {
+    A.osmError = null;
+    A.osmLoading = true;
+    render();
+    await loadOsm();
+    render();
+    if (A.osm.length) toast(`Found ${A.osm.length} more waters nearby.`, 'good');
   }
 
   /* ------------------------------------------------------------------ router */
@@ -215,6 +272,7 @@
     /* In map mode the map is the point, so the conditions card shrinks to one line
        rather than pushing the map below the fold. */
     root.appendChild(A.mapMode ? conditionsPill() : conditionsStrip());
+    root.appendChild(intentBar());
     root.appendChild(controlsBar());
 
     const list = visibleVenues();
@@ -426,6 +484,28 @@
     return strip;
   }
 
+  /* "What do you actually want today" — a different question from "what is nearest". */
+  function intentBar() {
+    const current = store.state.filters.intent;
+    const bar = h('div', { class: 'intent-bar', role: 'group', 'aria-label': 'What kind of session do you want' });
+    const options = [
+      [null, 'Anything', 'No preference'],
+      ['numbers', 'Catch a lot', 'Waters that give steady bites'],
+      ['specimen', 'Catch a big one', 'Specimen waters — fewer bites, bigger fish'],
+      ['wild', 'Wild and quiet', 'Natural waters, harder fishing']
+    ];
+    options.forEach(([val, label, title]) => {
+      bar.appendChild(h('button', {
+        class: 'intent-btn' + (current === val ? ' is-on' : ''),
+        title, 'aria-pressed': current === val,
+        style: val && G.data.CHARACTER[val] ? `--chip:${G.data.CHARACTER[val].colour}` : '',
+        text: label,
+        onclick: () => { store.patchFilters({ intent: val }); render(); }
+      }));
+    });
+    return bar;
+  }
+
   function conditionsPill() {
     const c = A.conditions;
     const bite = T.biteScore(c);
@@ -478,12 +558,23 @@
   }
 
   function staleBanner() {
+    if (A.osmLoading && !A.osm.length) {
+      return h('div', { class: 'banner', html: icon('clock', 16) +
+        '<span>Searching OpenStreetMap for waters near you… the built-in list is below in the meantime.</span>' });
+    }
     const msgs = [];
     if (A.osmError) msgs.push(A.osmError);
+    if (A.osmPartial) msgs.push(A.osmPartial);
     if (A.osmStale) msgs.push('Showing cached OpenStreetMap results — you appear to be offline.');
     if (A.weatherStale) msgs.push('Forecast is from an earlier cache and may be out of date.');
     if (!msgs.length) return null;
-    return h('div', { class: 'banner', html: icon('info', 16) + '<span>' + msgs.map(esc).join(' ') + '</span>' });
+
+    const banner = h('div', { class: 'banner' + (A.osmError ? ' warn' : '') });
+    banner.innerHTML = icon('info', 16) + '<span>' + msgs.map(esc).join(' ') + '</span>';
+    if (A.osmError || A.osmPartial) {
+      banner.appendChild(h('button', { class: 'btn small', text: 'Retry', onclick: retryOsm }));
+    }
+    return banner;
   }
 
   function provenanceNote() {
@@ -574,6 +665,13 @@
     section.appendChild(sheet);
   }
 
+  function charBadge(v) {
+    const id = G.data.characterOf(v);
+    const c = id && G.data.CHARACTER[id];
+    if (!c) return '';
+    return `<span class="char-badge" style="--chip:${c.colour}" title="${esc(c.blurb)}">${esc(c.short)}</span>`;
+  }
+
   function directionsUrl(v) {
     return `https://www.google.com/maps/dir/?api=1&destination=${v.lat},${v.lon}`;
   }
@@ -606,6 +704,7 @@
           ${v.drive != null ? `<span class="dot">·</span><span>${v.drive} min</span>` : ''}
         </span>
         <span class="row-species">
+          ${charBadge(v)}
           ${top.map((s) => `<span class="lk lk-${bandClass(s.band)}">${esc(s.species.name)}</span>`).join('')}
           ${v.source === 'osm' ? '<span class="muted small">likely, unconfirmed</span>' : ''}
         </span>
@@ -653,6 +752,12 @@
           <span class="muted small">${rating.displayIsMine ? 'your rating' : rating.seed != null ? 'indicative' : 'not rated'}</span>
         </div>
       </div>`;
+    const charId = G.data.characterOf(v);
+    const char = charId && G.data.CHARACTER[charId];
+    if (char) {
+      head.appendChild(h('div', { class: 'char-line', style: `--chip:${char.colour}`, html:
+        `<strong>${esc(char.label)}</strong><span>${esc(char.blurb)}</span>` }));
+    }
     if (v.notes) head.appendChild(h('p', { class: 'venue-notes', text: v.notes }));
     head.appendChild(h('div', { class: 'btn-row' }, [
       h('a', { class: 'btn', href: directionsUrl(v), target: '_blank', rel: 'noopener', html: icon('directions', 15) + '<span>Directions</span>' }),
@@ -1094,6 +1199,38 @@
       h('span', { text: 'Include waters found on OpenStreetMap (unverified access)' })
     ]));
     root.appendChild(set);
+
+    /* what the last OpenStreetMap lookup actually did */
+    const diagCard = h('details', { class: 'card' });
+    diagCard.appendChild(h('summary', { text: 'Nearby-water search: what happened' }));
+    const d = A.osmDiag;
+    if (!d) {
+      diagCard.appendChild(h('p', { class: 'muted small', text: 'No search has run yet in this session.' }));
+    } else {
+      const phase = (name, x) => h('div', { class: 'diag-row', html:
+        `<span>${name}</span><span class="${x.ok ? 'ok-line' : 'warn-line'}">${
+          x.ok ? `${x.count} found in ${(x.ms / 1000).toFixed(1)}s via ${esc(x.endpoint || '?')}`
+               : 'failed — ' + esc(x.error || 'unknown')}</span>` });
+      diagCard.appendChild(phase('Fishing spots', d.fishing));
+      diagCard.appendChild(phase('Lakes, rivers, canals', d.water));
+      diagCard.appendChild(h('p', { class: 'fineprint', text:
+        `Searched ${d.radiusKm} km around ${d.at ? d.at.split(':')[0] : 'your location'}.` }));
+      const tried = [].concat(d.fishing.tried || [], d.water.tried || []);
+      if (tried.length) {
+        diagCard.appendChild(h('p', { class: 'fineprint', text: 'Mirrors that did not answer: ' + tried.join('; ') }));
+      }
+    }
+    diagCard.appendChild(h('p', { class: 'fineprint', text:
+      'OpenStreetMap’s Overpass servers are free and shared, so they queue and time out at busy times. ' +
+      'The built-in venue list never depends on them.' }));
+    diagCard.appendChild(h('div', { class: 'btn-row' }, [
+      h('button', { class: 'btn primary', text: A.osmLoading ? 'Searching…' : 'Search again now', disabled: A.osmLoading, onclick: retryOsm }),
+      h('button', { class: 'btn', text: 'Clear cached results', onclick: () => {
+        try { localStorage.removeItem('cast-cache-v1'); } catch (e) { /* nothing to do */ }
+        toast('Cached lookups cleared.', 'info');
+      } })
+    ]));
+    root.appendChild(diagCard);
 
     /* add a venue */
     const add = h('details', { class: 'card', open: r.query.has('add') });

@@ -10,9 +10,13 @@
   'use strict';
 
   const MILES_PER_KM = 0.621371;
+  /* Several mirrors, because these are free shared services that rate-limit and queue.
+     One being busy should not mean the angler sees an empty map. */
   const OVERPASS = [
     'https://overpass-api.de/api/interpreter',
-    'https://overpass.kumi.systems/api/interpreter'
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://overpass.private.coffee/api/interpreter',
+    'https://overpass.osm.ch/api/interpreter'
   ];
 
   /* ------------------------------------------------------------------ distance */
@@ -139,18 +143,36 @@
      tags but NO coordinates, which silently drops every node — and a great many fishing
      spots in OSM are nodes. Plain body verbosity gives nodes their lat/lon and ways a
      computed centre, which is exactly what the map needs. */
-  function overpassQuery(lat, lon, radiusM) {
+  /* Split deliberately into two queries rather than one.
+
+     Phase 1 asks only for things explicitly tagged as fished. That tag set is tiny, so it
+     comes back fast even when the free Overpass servers are busy — and it is the phase that
+     actually answers "where can I fish". Phase 2 adds every named water, reservoir, river
+     and canal, which is a far heavier spatial query over a 50 km radius.
+
+     Running them separately means a slow or rate-limited phase 2 no longer takes the
+     fisheries down with it. */
+  function fishingQuery(lat, lon, radiusM) {
     const r = Math.round(radiusM);
-    return `[out:json][timeout:30];
+    return `[out:json][timeout:60];
 (
   nwr["leisure"="fishing"](around:${r},${lat},${lon});
   nwr["fishing"="yes"](around:${r},${lat},${lon});
+  nwr["shop"="fishing"](around:${r},${lat},${lon});
+);
+out center 200;`;
+  }
+
+  function waterQuery(lat, lon, radiusM) {
+    const r = Math.round(radiusM);
+    return `[out:json][timeout:90];
+(
   nwr["natural"="water"]["water"~"^(lake|pond|reservoir|lagoon|oxbow|basin)$"](around:${r},${lat},${lon});
   nwr["natural"="water"]["name"](around:${r},${lat},${lon});
   nwr["landuse"="reservoir"](around:${r},${lat},${lon});
   way["waterway"~"^(river|canal)$"]["name"](around:${r},${lat},${lon});
 );
-out center 200;`;
+out center 250;`;
   }
 
   /* Name search. Restricting by a water/fishing tag first keeps this cheap even over a
@@ -158,7 +180,7 @@ out center 200;`;
   function overpassNameQuery(term) {
     const safe = term.replace(/[\\"\[\]{}()*+?.^$|]/g, '\\$&');
     const UK = '49.8,-8.7,61.0,2.1';
-    return `[out:json][timeout:40][bbox:${UK}];
+    return `[out:json][timeout:80][bbox:${UK}];
 (
   nwr["leisure"="fishing"]["name"~"${safe}",i];
   nwr["fishing"="yes"]["name"~"${safe}",i];
@@ -234,38 +256,84 @@ out center 60;`;
     const q = String(term || '').trim();
     if (q.length < 3) return [];
     const key = 'name:' + q.toLowerCase();
-    const result = await cached(key, 7 * 24 * 3600e3, async () => {
-      const body = 'data=' + encodeURIComponent(overpassNameQuery(q));
-      let lastErr;
-      for (const endpoint of OVERPASS) {
-        try {
-          return await getJson(endpoint, { method: 'POST', body, timeout: 45000 });
-        } catch (e) { lastErr = e; }
-      }
-      throw lastErr;
-    });
+    const result = await cached(key, 7 * 24 * 3600e3,
+      () => runOverpass(overpassNameQuery(q), 90000, {}));
     return toVenues(result.value.elements).filter((v) => v.name !== 'Fishing spot');
   }
 
-  async function discoverVenues(lat, lon, radiusMiles) {
+  /* Try every mirror in turn, and report which one answered and how long it took, so a
+     failure can be shown to the angler instead of vanishing into an empty list. */
+  async function runOverpass(query, timeout, diag) {
+    const body = 'data=' + encodeURIComponent(query);
+    let lastErr;
+    for (const endpoint of OVERPASS) {
+      const started = Date.now();
+      try {
+        const json = await getJson(endpoint, { method: 'POST', body, timeout });
+        diag.endpoint = endpoint.replace('https://', '').split('/')[0];
+        diag.ms = Date.now() - started;
+        return json;
+      } catch (e) {
+        lastErr = e;
+        diag.tried = (diag.tried || []).concat(
+          `${endpoint.replace('https://', '').split('/')[0]}: ${e.name === 'AbortError' ? 'timed out' : e.message}`
+        );
+      }
+    }
+    throw lastErr;
+  }
+
+  /* Phase 1 (fishing-tagged) and phase 2 (all named water) are fetched and cached
+     independently. `onPartial` fires as soon as phase 1 lands so the list can paint
+     before the slower query finishes — or instead of it, if it never does. */
+  async function discoverVenues(lat, lon, radiusMiles, { onPartial } = {}) {
     /* Capped: an `around` search over water tags gets expensive fast, and Overpass is a
        free shared service. Beyond this the seed list carries the distance. */
     const radiusM = Math.min(radiusMiles / MILES_PER_KM * 1000, 50000);
-    const key = `osm:${lat.toFixed(2)},${lon.toFixed(2)}:${Math.round(radiusM / 1000)}`;
+    const at = `${lat.toFixed(2)},${lon.toFixed(2)}:${Math.round(radiusM / 1000)}`;
+    const diag = { fishing: {}, water: {}, at, radiusKm: Math.round(radiusM / 1000) };
 
-    const result = await cached(key, 7 * 24 * 3600e3, async () => {
-      const body = 'data=' + encodeURIComponent(overpassQuery(lat, lon, radiusM));
-      let lastErr;
-      for (const endpoint of OVERPASS) {
-        try {
-          return await getJson(endpoint, { method: 'POST', body, timeout: 25000 });
-        } catch (e) { lastErr = e; }
-      }
-      throw lastErr;
-    });
+    let venues = [];
+    let stale = false;
+    let fromCache = false;
 
-    const venues = toVenues(result.value.elements);
-    return { venues, stale: result.stale, fromCache: result.fromCache };
+    /* The client abort MUST be longer than the server-side [timeout:] in the query.
+       Aborting first means the server was never given the time its own query asked for. */
+    try {
+      const res = await cached('osmfish:' + at, 7 * 24 * 3600e3,
+        () => runOverpass(fishingQuery(lat, lon, radiusM), 70000, diag.fishing));
+      venues = toVenues(res.value.elements);
+      stale = stale || res.stale;
+      fromCache = fromCache || res.fromCache;
+      diag.fishing.count = venues.length;
+      diag.fishing.ok = true;
+      if (onPartial && venues.length) onPartial({ venues, stale, fromCache, diag });
+    } catch (e) {
+      diag.fishing.ok = false;
+      diag.fishing.error = e.name === 'AbortError' ? 'timed out' : e.message;
+    }
+
+    try {
+      const res = await cached('osmwater:' + at, 7 * 24 * 3600e3,
+        () => runOverpass(waterQuery(lat, lon, radiusM), 100000, diag.water));
+      const more = toVenues(res.value.elements);
+      const seen = new Set(venues.map((v) => v.id));
+      venues = venues.concat(more.filter((v) => !seen.has(v.id)));
+      stale = stale || res.stale;
+      fromCache = fromCache || res.fromCache;
+      diag.water.count = more.length;
+      diag.water.ok = true;
+    } catch (e) {
+      diag.water.ok = false;
+      diag.water.error = e.name === 'AbortError' ? 'timed out' : e.message;
+    }
+
+    if (!diag.fishing.ok && !diag.water.ok) {
+      const err = new Error('Overpass did not answer: ' + (diag.fishing.error || diag.water.error));
+      err.diag = diag;
+      throw err;
+    }
+    return { venues, stale, fromCache, diag };
   }
 
   /* ------------------------------------------------------------------ weather */
