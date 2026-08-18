@@ -318,10 +318,65 @@ body.has-livebar #app { top: calc(var(--hdr) + var(--safe-t) + 38px); }
 .station-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
 .station-actions .btn { padding: 12px 6px; white-space: nowrap; }
 
-.live-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 12px 0 4px; }
+.live-metrics {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  gap: 8px; margin: 12px 0 4px;
+}
 .metric { text-align: center; background: var(--card2); border-radius: 12px; padding: 9px 4px; }
 .m-val { display: block; font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .m-label { display: block; font-size: 10.5px; color: var(--fg2); margin-top: 2px; }
+
+/* ---------------- measuring ---------------- */
+
+.trk { margin: 12px 0 2px; }
+.trk.off {
+  display: flex; align-items: center; gap: 8px; justify-content: space-between;
+  background: var(--card2); border-radius: 11px; padding: 8px 12px;
+  font-size: 12.5px; color: var(--fg2);
+}
+.trk-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--card2); border: 1px solid var(--line); border-radius: 999px;
+  padding: 4px 10px; font-size: 11.5px; font-weight: 700; color: var(--fg2);
+}
+.pill::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none;
+}
+.pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.pill.wait { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 40%, transparent); }
+.pill.wait::before { animation: pulse 1.4s infinite; }
+.pill.bad { color: var(--fg2); }
+.trk-err, .trk-note {
+  font-size: 12px; line-height: 1.45; margin-top: 8px;
+  background: var(--card2); border-radius: 10px; padding: 8px 11px;
+}
+.trk-err { color: var(--bad); }
+.trk-note { color: var(--fg2); }
+.trk-note[hidden] { display: none; }
+.trk-note .link { font-size: 12px; padding: 0; }
+.btn.wide.small { padding: 9px 12px; font-size: 13px; margin-top: 9px; }
+
+.route-wrap {
+  background: var(--card); border-radius: 12px; padding: 6px;
+  margin-bottom: 9px; display: grid; place-items: center;
+}
+.route-wrap.big { margin: 0 0 12px; padding: 10px; }
+.route { width: 100%; max-width: 190px; aspect-ratio: 1; display: block; }
+.route-wrap.big .route { max-width: 230px; }
+.route-line { fill: none; stroke: var(--acc); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.route-start { fill: var(--ok); stroke: none; }
+.route-end { fill: var(--bad); stroke: none; }
+
+.stride { background: var(--card2); border-radius: 12px; padding: 11px 12px; margin-bottom: 13px; }
+.stride-row {
+  display: flex; justify-content: space-between; gap: 10px;
+  font-size: 13px; padding: 4px 0;
+}
+.stride-cal { font-weight: 700; color: var(--acc); }
+.stride p { margin: 8px 0 0; }
+.stride .link { padding: 6px 0 0; }
+.row2.tightless { margin-bottom: 10px; }
 
 .readouts { margin-top: 12px; }
 .readout-head {

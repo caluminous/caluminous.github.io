@@ -2,7 +2,7 @@
 (function (G) {
   'use strict';
 
-  const UI = G.UI, Store = G.Store, Data = G.Data, Session = G.Session, NFC = G.NFC, U = G.Util;
+  const UI = G.UI, Store = G.Store, Data = G.Data, Session = G.Session, NFC = G.NFC, Track = G.Track, U = G.Util;
   const $ = UI.$, $$ = UI.$$, esc = UI.esc;
 
   let view = 'tap';
@@ -71,13 +71,27 @@
     if (!live) return;
     const block = Session.activeBlock();
 
+    /* Fold the sensors into the live block first, silently, so the numbers
+       painted below are this second's and no render is triggered. */
+    Track.tick();
+    if (block) silently(() => Session.syncTracking(false));
+    const snap = Track.snapshot();
+
     $$('[data-tick]').forEach(el => {
       const what = el.getAttribute('data-tick');
       if (what === 'workout') el.textContent = U.clock(Session.workoutElapsed());
       else if (what === 'block') el.textContent = U.clock(Session.blockElapsed(block));
       else if (what === 'pace' && block) el.textContent = paceNow(block);
       else if (what === 'kcal' && block) el.textContent = String(liveKcal());
+      else if (what === 'distance' && block) el.textContent = Store.distLabel(block.distanceM || 0, block.type);
+      else if (what === 'steps' && block) el.textContent = String(block.steps || 0);
+      else if (what === 'cadence' && block) el.textContent = block.cadence > 0 ? String(block.cadence) : '—';
+      else if (what === 'gpspill') repaintPill(el, gpsPill(snap));
+      else if (what === 'steppill') repaintPill(el, stepPill(snap, block));
+      else if (what === 'manualnote' && block) el.hidden = !block.distanceManual;
     });
+
+    syncDistanceField(block);
 
     const left = Session.restLeft();
     if (left != null) {
@@ -96,6 +110,27 @@
         if (box) box.classList.add('done');
       }
     }
+  }
+
+  /* Swap a pill's text and colour without rebuilding the row around it. */
+  function repaintPill(el, html) {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const next = tmp.firstElementChild;
+    if (!next) return;
+    if (el.className !== next.className) el.className = next.className;
+    if (el.textContent !== next.textContent) el.textContent = next.textContent;
+  }
+
+  /* Keep the typed-in distance box showing what the sensors measured —
+     unless you are actually typing in it, or have taken it over. */
+  function syncDistanceField(block) {
+    if (!block || block.distanceManual) return;
+    const input = $('[data-ro="distance"]');
+    if (!input || document.activeElement === input) return;
+    if (!block.distanceSource || block.distanceSource === 'manual') return;
+    const want = String(distanceInputValue(block));
+    if (input.value !== want) input.value = want;
   }
 
   function paceNow(block) {
@@ -536,7 +571,7 @@
         '<span class="station-icon c-' + esc((machine && machine.colour) || 'a') + '">' + Data.icon(b.type, 22) + '</span>' +
         '<div class="station-id">' +
           '<div class="station-name">' + esc(b.name) + '</div>' +
-          '<div class="station-type">' + esc([t.name === b.name ? null : t.name, machine && machine.place].filter(Boolean).join(' · ') || t.name) + '</div>' +
+          stationSubtitle(b, t, machine) +
         '</div>' +
         '<button class="icon-btn" data-a="renamestation" aria-label="Rename station">' +
           '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 20h4l10-10-4-4L4 16z"></path><path d="M14 6l4 4"></path></svg>' +
@@ -555,6 +590,12 @@
       '</section>';
   }
 
+  /* Nothing at all beats repeating the station's own name back at it. */
+  function stationSubtitle(b, t, machine) {
+    const bits = [t.name === b.name ? null : t.name, machine && machine.place].filter(Boolean);
+    return bits.length ? '<div class="station-type">' + esc(bits.join(' · ')) + '</div>' : '';
+  }
+
   /* ---------------- cardio ---------------- */
 
   function cardioPanel(b, t) {
@@ -571,16 +612,90 @@
     if (fields.includes('watts')) rows.push(readoutField('Watts', 'watts', b.watts, 'W'));
     rows.push(readoutField('Avg HR', 'hr', b.avgHr, 'bpm'));
 
-    return '<div class="live-metrics">' +
-        '<div class="metric"><span class="m-val" data-tick="pace">' + paceNow(b) + '</span><span class="m-label">Pace</span></div>' +
-        '<div class="metric"><span class="m-val">' + Store.distLabel(b.distanceM || 0, b.type) + '</span><span class="m-label">Distance</span></div>' +
-        '<div class="metric"><span class="m-val" data-tick="kcal">' + liveKcal() + '</span><span class="m-label">kcal</span></div>' +
+    const want = Session.sensorsFor(b.type);
+    const metrics = [
+      ['pace', paceNow(b), 'Pace'],
+      ['distance', Store.distLabel(b.distanceM || 0, b.type), 'Distance'],
+      ['kcal', String(liveKcal()), 'kcal']
+    ];
+    if (want.steps) {
+      metrics.push(['steps', String(b.steps || 0), 'Steps']);
+      metrics.push(['cadence', (b.cadence || 0) || '—', 'Cadence']);
+    }
+
+    return trackingStrip(b, t, want) +
+      '<div class="live-metrics">' +
+        metrics.map(m => '<div class="metric"><span class="m-val" data-tick="' + m[0] + '">' + m[1] +
+          '</span><span class="m-label">' + esc(m[2]) + '</span></div>').join('') +
       '</div>' +
       '<div class="readouts">' +
-        '<div class="readout-head">Off the console</div>' +
+        '<div class="readout-head">' + (want.gps || want.steps ? 'Correct it by hand' : 'Off the console') + '</div>' +
         '<div class="readout-grid">' + rows.join('') + '</div>' +
       '</div>' +
       splitsList(b);
+  }
+
+  /* ---------------- measuring ----------------
+     Says which sensors are actually running, because "0.00 km" means two
+     very different things depending on whether anything is listening. */
+
+  function trackingStrip(b, t, want) {
+    const canGps = !!t.gps, canSteps = !!t.steps;
+    if (!canGps && !canSteps) return '';
+    const p = Store.profile();
+    const snap = Track.snapshot();
+
+    /* Switched off in settings rather than unavailable — a different
+       problem, and one the user can fix in two taps. */
+    if ((canGps && p.useGps === false) && (!canSteps || p.countSteps === false)) {
+      return '<div class="trk off"><span>Measuring is switched off.</span>' +
+        '<button class="link" data-a="settings">Turn it on</button></div>';
+    }
+
+    const pills = [];
+    if (want.gps) pills.push(gpsPill(snap));
+    else if (canGps && Track.gpsSupported() && p.useGps === false) pills.push('<span class="pill">GPS off</span>');
+    else if (canGps && !Track.gpsSupported()) pills.push('<span class="pill">No GPS here</span>');
+
+    if (want.steps) pills.push(stepPill(snap, b));
+    else if (canSteps && !Track.motionSupported()) pills.push('<span class="pill">No motion sensor</span>');
+    else if (canSteps && p.countSteps === false) pills.push('<span class="pill">Steps off</span>');
+
+    const err = (want.gps && snap.gps.error) || (want.steps && snap.steps.error) || null;
+    const needsPerm = want.steps && Track.motionNeedsPermission() && snap.steps.status !== 'on';
+
+    return '<div class="trk">' +
+      '<div class="trk-pills">' + pills.join('') + '</div>' +
+      (needsPerm ? '<button class="btn ghost wide small" data-a="motionperm">Allow motion access to count steps</button>' : '') +
+      (err ? '<div class="trk-err">' + esc(err) + '</div>' : '') +
+      /* Always in the DOM, shown by the ticker: typing in the distance box
+         deliberately skips a re-render, so this cannot be conditional on
+         the markup being rebuilt. */
+      '<div class="trk-note" data-tick="manualnote"' + (b.distanceManual ? '' : ' hidden') + '>' +
+        'You typed the distance, so the sensors have stopped overwriting it. ' +
+        '<button class="link" data-a="unmanual">Measure it again</button></div>' +
+      '</div>';
+  }
+
+  function gpsPill(snap) {
+    const g = snap.gps;
+    const label = g.status === 'good' ? 'GPS ' + (g.accuracy != null ? '±' + Math.round(g.accuracy) + ' m' : 'locked')
+      : g.status === 'acquiring' ? 'Finding GPS…'
+      : g.status === 'poor' ? 'GPS weak'
+      : g.status === 'denied' ? 'GPS blocked'
+      : 'GPS off';
+    const cls = g.status === 'good' ? 'ok' : g.status === 'acquiring' ? 'wait' : 'bad';
+    return '<span class="pill ' + cls + '" data-tick="gpspill">' + esc(label) + '</span>';
+  }
+
+  function stepPill(snap, b) {
+    const st = snap.steps;
+    const label = st.status === 'on' ? 'Counting steps'
+      : st.status === 'waiting' ? 'Waiting for movement'
+      : st.status === 'unsupported' ? 'No motion sensor'
+      : st.status === 'blocked' ? 'Motion blocked' : 'Steps off';
+    const cls = st.status === 'on' ? 'ok' : st.status === 'waiting' ? 'wait' : 'bad';
+    return '<span class="pill ' + cls + '" data-tick="steppill">' + esc(label) + '</span>';
   }
 
   function readoutField(label, name, value, unit) {
@@ -721,7 +836,8 @@
       return sets + ' set' + (sets === 1 ? '' : 's') + (vol > 0 ? ' · ' + Math.round(vol) + ' kg volume' : '') + ' · ' + U.clock(secs);
     }
     return [b.distanceM > 0 ? Store.distLabel(b.distanceM, b.type) : null, U.clock(secs),
-      b.distanceM > 0 ? Data.paceLabel(b.type, b.distanceM, secs) : null].filter(Boolean).join(' · ');
+      b.distanceM > 0 ? Data.paceLabel(b.type, b.distanceM, secs) : null,
+      b.steps > 0 ? b.steps.toLocaleString('en-GB') + ' steps' : null].filter(Boolean).join(' · ');
   }
 
   /* ---------------- live wiring ---------------- */
@@ -746,6 +862,18 @@
     act('rest30', () => { Session.addRest(30); render(); });
     act('restskip', () => { Session.stopRest(); render(); });
     act('plannext', () => { Session.nextPlanStation(); render(); });
+    act('settings', settingsSheet);
+    act('unmanual', () => {
+      Session.patchBlock({ distanceManual: false, distanceSource: null });
+      render();
+    });
+    act('motionperm', async () => {
+      const ok = await Track.requestMotionPermission();
+      if (!ok) { UI.toast('Motion access was refused — steps cannot be counted', 'long'); return; }
+      Track.startSteps();
+      UI.toast('Counting steps');
+      render();
+    });
     act('renamestation', () => {
       if (!block) return;
       renameStationSheet(block);
@@ -783,7 +911,12 @@
         const b = Session.activeBlock();
         if (!b) return;
         silently(() => {
-          if (name === 'distance') Session.patchBlock({ distanceM: distanceToMetres(b, raw) });
+          if (name === 'distance') Session.patchBlock({
+            distanceM: distanceToMetres(b, raw),
+            /* Your eyes beat the sensors: from here the box is yours. */
+            distanceManual: true,
+            distanceSource: 'manual'
+          });
           else if (name === 'level') Session.patchBlock({ level: raw });
           else if (name === 'incline') Session.patchBlock({ inclinePct: raw });
           else if (name === 'watts') Session.patchBlock({ watts: raw });
@@ -940,6 +1073,11 @@
       (t.kind === 'sets' && (b.sets || []).length
         ? '<div class="fin-sets">' + b.sets.map(s => (s.weightKg > 0 ? U.round(s.weightKg, 1) + '×' : '') + (s.reps || 0)).join(' · ') + '</div>'
         : '') +
+      (b.steps > 0 ? '<div class="fin-sets">' + b.steps.toLocaleString('en-GB') + ' steps' +
+        (b.cadence > 0 ? ' · ' + b.cadence + ' spm' : '') +
+        (b.distanceSource && b.distanceSource !== 'manual' ? ' · distance by ' + esc(sourceWord(b.distanceSource)).toLowerCase() : '') +
+        '</div>'
+        : (b.distanceSource === 'gps' ? '<div class="fin-sets">Distance measured by GPS</div>' : '')) +
       '<div class="readout-grid">' + rows.join('') + '</div>' +
       '</div>';
   }
@@ -994,6 +1132,11 @@
             UI.stat(String(tot.reps), 'Reps') +
             UI.stat(Math.round(tot.volumeKg) + '<span class="unit">kg</span>', 'Volume') +
             '</div>' : '') +
+          (tot.steps ? '<div class="row2">' +
+            UI.stat(tot.steps.toLocaleString('en-GB'), 'Steps') +
+            UI.stat(String(bestCadence(w) || '—') + (bestCadence(w) ? '<span class="unit">spm</span>' : ''), 'Cadence') +
+            '</div>' : '') +
+          routeBlock(w) +
           '<div class="sum-blocks">' + w.blocks.map(b =>
             '<div class="done-row"><span class="dr-icon">' + Data.icon(b.type, 18) + '</span>' +
             '<span class="dr-body"><b>' + esc(b.name) + '</b><br><span class="dim">' + blockSummaryLine(b) + '</span></span></div>').join('') +
@@ -1006,6 +1149,49 @@
       $('[data-a="done"]', el).onclick = () => close();
       $('[data-a="edit"]', el).onclick = () => { close(); workoutSheet(w); };
     }, { tall: true });
+  }
+
+  /* A route drawn from its own points — no tiles, no network, and it still
+     tells you at a glance which run this was. */
+  function routeSvg(points) {
+    if (!points || points.length < 3) return '';
+    const lats = points.map(p => p[0]), lons = points.map(p => p[1]);
+    const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+    const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+    /* Longitude degrees shrink towards the poles; without this correction
+       every route comes out stretched sideways. */
+    const midLat = (minLat + maxLat) / 2;
+    const kx = Math.cos(midLat * Math.PI / 180);
+    const w = Math.max((maxLon - minLon) * kx, 1e-9);
+    const h = Math.max(maxLat - minLat, 1e-9);
+    const pad = 6, box = 100;
+    const scale = (box - pad * 2) / Math.max(w, h);
+    const ox = (box - w * scale) / 2, oy = (box - h * scale) / 2;
+
+    const d = points.map((p, i) => {
+      const x = ox + (p[1] - minLon) * kx * scale;
+      const y = box - (oy + (p[0] - minLat) * scale);
+      return (i ? 'L' : 'M') + U.round(x, 1) + ' ' + U.round(y, 1);
+    }).join(' ');
+
+    const first = points[0], last = points[points.length - 1];
+    const pt = p => [ox + (p[1] - minLon) * kx * scale, box - (oy + (p[0] - minLat) * scale)];
+    const a = pt(first), b = pt(last);
+    return '<svg class="route" viewBox="0 0 100 100" aria-label="Route shape">' +
+      '<path class="route-line" d="' + d + '"></path>' +
+      '<circle class="route-start" cx="' + U.round(a[0], 1) + '" cy="' + U.round(a[1], 1) + '" r="2.6"></circle>' +
+      '<circle class="route-end" cx="' + U.round(b[0], 1) + '" cy="' + U.round(b[1], 1) + '" r="2.6"></circle>' +
+      '</svg>';
+  }
+
+  function bestCadence(w) {
+    return Math.max(0, ...(w.blocks || []).map(b => b.cadence || 0)) || 0;
+  }
+
+  function routeBlock(w) {
+    const withRoute = (w.blocks || []).filter(b => b.route && b.route.length > 2);
+    if (!withRoute.length) return '';
+    return '<div class="route-wrap big">' + routeSvg(withRoute[0].route) + '</div>';
   }
 
   /* ---------------- view: log ---------------- */
@@ -1126,6 +1312,10 @@
     }, { tall: true });
   }
 
+  function sourceWord(src) {
+    return src === 'gps' ? 'GPS' : src === 'steps' ? 'Step count' : 'Typed in';
+  }
+
   function rpeWord(v) {
     return v <= 3 ? 'Easy' : v <= 5 ? 'Steady' : v <= 7 ? 'Hard' : 'All out';
   }
@@ -1140,16 +1330,22 @@
       if (b.level != null) rows.push(['Level', String(b.level)]);
       if (b.inclinePct != null) rows.push(['Incline', b.inclinePct + '%']);
     }
+    if (b.steps > 0) {
+      rows.push(['Steps', b.steps.toLocaleString('en-GB')]);
+      if (b.cadence > 0) rows.push(['Cadence', b.cadence + ' spm']);
+    }
     if (b.avgHr) {
       const z = Data.zoneFor(b.avgHr, Store.age());
       rows.push(['Avg HR', b.avgHr + ' bpm' + (z ? ' · Z' + z.n + ' ' + z.name : '')]);
     }
     rows.push(['Time', U.clock(secs)]);
     rows.push(['Energy', Store.blockKcal(b) + ' kcal']);
+    if (b.distanceM > 0 && b.distanceSource) rows.push(['Measured by', sourceWord(b.distanceSource)]);
 
     return '<div class="detail" data-edit-saved="' + esc(b.id) + '">' +
       '<div class="detail-head">' + Data.icon(b.type, 18) + '<b>' + esc(b.name) + '</b>' +
         '<span class="dim">' + esc(t.name) + '</span></div>' +
+      ((b.route && b.route.length > 2) ? '<div class="route-wrap">' + routeSvg(b.route) + '</div>' : '') +
       ((b.sets || []).length ? '<div class="detail-sets">' +
         b.sets.map((s, i) => '<span class="setpill">' + (i + 1) + '. ' +
           (s.weightKg > 0 ? esc(Store.weightLabel(s.weightKg)) + ' × ' : '') + (s.reps || 0) + '</span>').join('') +
@@ -1697,6 +1893,7 @@
         UI.stat(st.current + '<span class="unit">d</span>', 'Current streak') +
         UI.stat(st.best + '<span class="unit">d</span>', 'Best streak') +
       '</div>' +
+      stepsBlock(week) +
       weekBars() +
       loadTrend() +
       typeBreakdown() +
@@ -1707,6 +1904,32 @@
     $$('[data-rec]', app).forEach(b => { b.onclick = () => recordSheet(b.getAttribute('data-rec')); });
     const mus = $('[data-a="muscledays"]', app);
     if (mus) mus.onclick = () => { muscleDays = muscleDays === 7 ? 28 : 7; render(); };
+  }
+
+  /* Steps counted during sessions. Deliberately not called a daily step
+     count: nothing runs while the app is closed, and saying otherwise
+     would be a lie the user could not check. */
+  function stepsBlock(week) {
+    if (!week.steps) return '';
+    const points = [];
+    for (let i = 6; i >= 0; i--) {
+      const date = U.shiftDate(U.today(), -i);
+      points.push({
+        label: U.friendlyDate(date),
+        tick: U.parseISO(date).toLocaleDateString('en-GB', { weekday: 'narrow' }),
+        value: Store.stepsOn(date),
+        highlight: i === 0
+      });
+    }
+    return '<section class="card">' +
+      '<div class="card-head"><h2>Steps</h2><span class="dim">this week</span></div>' +
+      '<div class="row2 tightless">' +
+        UI.stat(week.steps.toLocaleString('en-GB'), 'While training') +
+        UI.stat(Math.round(week.steps / 7).toLocaleString('en-GB'), 'A day') +
+      '</div>' +
+      UI.barChart(points, { height: 62, format: v => v.toLocaleString('en-GB') + ' steps' }) +
+      '<p class="dim small">Counted only while a session is running — a web app cannot follow you around the rest of the day.</p>' +
+      '</section>';
   }
 
   function weekBars() {
@@ -1880,10 +2103,21 @@
         UI.numField('Body weight', 'weightKg', Store.metric() ? p.weightKg : U.round(p.weightKg * 2.20462, 1),
           { hint: 'Used for the calorie estimate — nothing else' }) +
         UI.numField('Year of birth', 'birthYear', p.birthYear || '', { hint: 'Sets your heart-rate zones' }) +
+        UI.numField('Height', 'heightCm', Store.metric() ? p.heightCm : U.round((p.heightCm || 175) / 2.54, 1),
+          { hint: Store.metric() ? 'cm — the first guess at your stride length' : 'inches — the first guess at your stride length' }) +
         UI.selectField('Units', 'units', p.units, [
           { value: 'metric', label: 'Metric — kg, km' },
           { value: 'imperial', label: 'Imperial — lb, miles' }]) +
         UI.numField('Sessions a week', 'weeklyGoal', p.weeklyGoal) +
+
+        '<div class="sub-head">Measuring</div>' +
+        UI.toggleRow('Use GPS outdoors', 'useGps', p.useGps !== false,
+          'Measures distance and pace on runs, rides and walks' +
+          (Track.gpsSupported() ? '' : ' — not available in this browser')) +
+        UI.toggleRow('Count steps', 'countSteps', p.countSteps !== false,
+          'Uses the motion sensor during a session' +
+          (Track.motionSupported() ? '' : ' — no motion sensor found here')) +
+        strideBlock(p) +
 
         '<div class="sub-head">Training</div>' +
         UI.numField('Default rest', 'restSec', p.restSec, { hint: 'Seconds between sets. Machines can override it.' }) +
@@ -1915,6 +2149,14 @@
         '</form>';
 
       UI.wireToggles(el, (name, on) => Store.setProfile({ [name]: on }));
+
+      const resetStride = $('[data-a="resetstride"]', el);
+      if (resetStride) resetStride.onclick = () => {
+        Store.setProfile({ strideCal: {} });
+        UI.toast('Stride reset — it will be measured again on your next run');
+        close();
+        settingsSheet();
+      };
 
       $('[data-a="exp"]', el).onclick = () =>
         UI.download('tapin-backup-' + U.today() + '.json', Store.exportJson(), 'application/json');
@@ -1951,9 +2193,11 @@
         const v = UI.values(el);
         const wasMetric = Store.metric();
         const weight = v.weightKg > 0 ? (wasMetric ? v.weightKg : v.weightKg / 2.20462) : p.weightKg;
+        const height = v.heightCm > 0 ? (wasMetric ? v.heightCm : v.heightCm * 2.54) : p.heightCm;
         Store.setProfile({
           name: (v.name || '').trim(),
           weightKg: U.round(weight, 1),
+          heightCm: U.round(U.clamp(height, 100, 250), 1),
           birthYear: v.birthYear > 1900 ? v.birthYear : null,
           units: v.units,
           weeklyGoal: U.clamp(v.weeklyGoal || 4, 1, 14),
@@ -1965,6 +2209,24 @@
         render();
       };
     }, { tall: true });
+  }
+
+  /* What the app has learnt about your stride, and where that came from. */
+  function strideBlock(p) {
+    const cal = p.strideCal || {};
+    const rows = [
+      ['Running', cal.run, Track.defaultStride(p.heightCm, 'run')],
+      ['Walking', cal.walk, Track.defaultStride(p.heightCm, 'walk')]
+    ];
+    return '<div class="stride">' +
+      '<div class="readout-head">Stride length</div>' +
+      rows.map(r => '<div class="stride-row"><span>' + esc(r[0]) + '</span>' +
+        '<span class="' + (r[1] > 0 ? 'stride-cal' : 'dim') + '">' +
+        U.round(r[1] > 0 ? r[1] : r[2], 2) + ' m · ' + (r[1] > 0 ? 'measured' : 'from your height') +
+        '</span></div>').join('') +
+      '<p class="dim small">A session with both GPS and steps running measures this for real, and the step counter uses it afterwards — on a treadmill, or anywhere the signal goes.</p>' +
+      ((cal.run > 0 || cal.walk > 0) ? '<button type="button" class="link" data-a="resetstride">Reset stride</button>' : '') +
+      '</div>';
   }
 
   function applyTheme() {
@@ -2011,7 +2273,10 @@
 
     render();
 
-    if (Session.live()) Session.holdScreen();
+    if (Session.live()) {
+      Session.holdScreen();
+      Session.resumeTracking();
+    }
 
     const deep = NFC.readDeepLink();
     if (deep) setTimeout(() => handleDeepLink(deep), 60);
