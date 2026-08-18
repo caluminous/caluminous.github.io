@@ -82,8 +82,74 @@
       seat: defaults.seat != null ? defaults.seat : null,
       splits: [],
       sets: [],
+      steps: 0,
+      cadence: 0,
+      route: null,
+      distanceSource: null,   /* 'gps' | 'steps' | 'manual' */
+      distanceManual: false,  /* set once you type over the measurement */
       note: ''
     };
+  }
+
+  /* ---------------- sensors ----------------
+
+     Which sensors a station runs comes from the activity and from your
+     settings; a bike outdoors wants GPS and not a step count, a treadmill
+     wants the reverse, and a bench press wants neither. */
+
+  function sensorsFor(typeId) {
+    const t = G.Data.type(typeId);
+    const p = S().profile();
+    return {
+      gps: !!(t.gps && p.useGps !== false && G.Track.gpsSupported()),
+      steps: !!(t.steps && p.countSteps !== false && G.Track.motionSupported()),
+      type: typeId
+    };
+  }
+
+  /* What the block had already banked before this run of the sensors. The
+     sensors always count from zero — on a reopened station, or after the
+     page has been reloaded mid-session — so without this the distance
+     already measured would be thrown away. */
+  let trackBase = null;
+
+  function startTracking(block) {
+    const want = sensorsFor(block.type);
+    trackBase = { blockId: block.id, distanceM: block.distanceM || 0, steps: block.steps || 0 };
+    if (!want.gps && !want.steps) { G.Track.stop(); return want; }
+    G.Track.start(want);
+    return want;
+  }
+
+  function baseFor(blockId) {
+    return (trackBase && trackBase.blockId === blockId) ? trackBase : { distanceM: 0, steps: 0 };
+  }
+
+  /* Fold whatever the sensors measured into the block. Called every second
+     while a station runs, and once more as it closes. */
+  function syncTracking(finalise) {
+    const b = activeBlock();
+    if (!b) return null;
+    const t = G.Data.type(b.type);
+    const snap = G.Track.snapshot();
+    if (!snap.running) return null;
+
+    const measured = G.Track.bestDistance(S().profile(), b.type);
+    const base = baseFor(b.id);
+    const patch = { steps: base.steps + snap.steps.count, cadence: snap.steps.cadence };
+
+    /* Typing a distance yourself takes over from the sensors for good —
+       you can see the machine's console and it cannot. */
+    if (!b.distanceManual && t.kind !== 'sets' && measured.metres > 0) {
+      patch.distanceM = Math.round(base.distanceM + measured.metres);
+      patch.distanceSource = measured.source;
+    }
+    if (finalise && snap.gps.points.length > 1) {
+      patch.route = (b.route && b.route.length ? b.route : []).concat(snap.gps.points);
+    }
+
+    patchBlock(patch, b.id);
+    return patch;
   }
 
   function start(machineOrType, opts) {
@@ -103,6 +169,7 @@
     };
     S().setLive(w);
     primeSets(block);
+    startTracking(block);
     return w;
   }
 
@@ -115,6 +182,7 @@
     const block = newBlock(machineOrType, opts);
     S().patchLive(x => { x.blocks.push(block); });
     primeSets(block);
+    startTracking(block);
     return block;
   }
 
@@ -134,6 +202,9 @@
   function closeStation() {
     const b = activeBlock();
     if (!b) return null;
+    syncTracking(true);
+    learnStride(b);
+    G.Track.stop();
     const secs = blockElapsed(b);
     S().patchLive(x => {
       const blk = x.blocks[x.blocks.length - 1];
@@ -146,6 +217,14 @@
   }
 
   /* Reopen the station just closed — the undo for a mis-tap. */
+  /* A session with both sensors running measures your own stride, which is
+     what makes the step counter useful later when there is no GPS. */
+  function learnStride(b) {
+    const snap = G.Track.snapshot();
+    const cal = G.Track.calibrate(S().profile(), b.type, snap.gps.distanceM, snap.steps.count);
+    if (cal) S().setProfile({ strideCal: cal });
+  }
+
   function reopenStation() {
     const w = live();
     if (!w || !w.blocks.length) return null;
@@ -159,6 +238,9 @@
       blk.endedAt = null;
       blk.durationSec = 0;
     });
+    /* Carry on measuring, starting the distance again from what is already
+       banked on the block rather than from zero. */
+    startTracking(b);
     return b;
   }
 
@@ -173,6 +255,8 @@
   function pause() {
     const b = activeBlock();
     if (!b || b.pauseStart) return;
+    syncTracking(false);
+    G.Track.pause();
     S().patchLive(x => { x.blocks[x.blocks.length - 1].pauseStart = Date.now(); });
   }
 
@@ -184,6 +268,7 @@
       blk.pausedMs = (blk.pausedMs || 0) + (Date.now() - blk.pauseStart);
       blk.pauseStart = null;
     });
+    G.Track.resume();
   }
 
   function togglePause() { isPaused() ? resume() : pause(); }
@@ -341,6 +426,7 @@
     const w = live();
     if (!w) return null;
     if (activeBlock()) closeStation();
+    G.Track.stop();
 
     const done = JSON.parse(JSON.stringify(S().live()));
     Object.assign(done, extra || {});
@@ -376,11 +462,12 @@
   /* Stations with no time and nothing logged are mis-taps, not workouts. */
   function keepBlock(b) {
     const secs = b.durationSec || 0;
-    const has = (b.sets && b.sets.length) || (b.distanceM > 0) || (b.note && b.note.trim());
+    const has = (b.sets && b.sets.length) || (b.distanceM > 0) || (b.steps > 0) || (b.note && b.note.trim());
     return secs >= 20 || !!has;
   }
 
   function discard() {
+    G.Track.stop();
     S().clearLive();
   }
 
@@ -409,6 +496,14 @@
     if (!step || !step.next) return null;
     const m = step.next.machineId ? S().machine(step.next.machineId) : null;
     return openStation(m || step.next.type, { name: step.next.name });
+  }
+
+  /* Called on boot: a session survives a reload through storage, but the
+     sensors do not, so they are started again from what is banked. */
+  function resumeTracking() {
+    const b = activeBlock();
+    if (!b || b.pauseStart) return null;
+    return startTracking(b);
   }
 
   /* ---------------- screen wake lock ----------------
@@ -443,6 +538,7 @@
     addSet, updateSet, removeSet, lastSet, startRest, stopRest, addRest, restLeft, restSeconds,
     lap, removeLap, patchBlock, patchWorkout,
     finish, discard, keepBlock,
+    sensorsFor, startTracking, syncTracking, resumeTracking,
     startPlan, planStep, nextPlanStation,
     holdScreen, releaseScreen, newBlock
   };

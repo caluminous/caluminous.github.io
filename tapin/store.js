@@ -90,7 +90,13 @@
         autoRest: true,
         haptics: true,
         tapOutEnds: true,
-        weeklyGoal: 4
+        weeklyGoal: 4,
+        useGps: true,
+        countSteps: true,
+        stepGoal: 8000,
+        /* Measured metres per step, learnt from sessions that had both GPS
+           and a step count. Empty until one of those happens. */
+        strideCal: {}
       },
       machines: [],
       workouts: [],
@@ -267,6 +273,13 @@
     return state.workouts.filter(w => w.date === dateIso);
   }
 
+  /* Steps counted on a date. Only sessions contribute — the app is not
+     running while your phone is in a pocket, so this is never a whole-day
+     step count and is not labelled as one. */
+  function stepsOn(dateIso) {
+    return workoutsOn(dateIso).reduce((sum, w) => sum + totals(w).steps, 0);
+  }
+
   /* ---------------- live workout ----------------
      Kept in the same store so an accidental refresh, a phone lock or a
      browser tab eviction never loses a session in progress. */
@@ -337,7 +350,7 @@
 
   function totals(w) {
     const wt = state.profile.weightKg;
-    let sec = 0, dist = 0, kc = 0, vol = 0, sets = 0, reps = 0;
+    let sec = 0, dist = 0, kc = 0, vol = 0, sets = 0, reps = 0, steps = 0;
     (w.blocks || []).forEach(b => {
       const d = blockDuration(b);
       sec += d;
@@ -346,8 +359,9 @@
       vol += blockVolume(b);
       sets += (b.sets || []).length;
       reps += (b.sets || []).reduce((s, x) => s + (x.reps || 0), 0);
+      steps += b.steps || 0;
     });
-    return { seconds: sec, distanceM: dist, kcal: kc, volumeKg: vol, sets, reps, blocks: (w.blocks || []).length };
+    return { seconds: sec, distanceM: dist, kcal: kc, volumeKg: vol, sets, reps, steps, blocks: (w.blocks || []).length };
   }
 
   /* Elapsed wall-clock time, which for a circuit is longer than the sum of
@@ -495,16 +509,16 @@
     const start = weekStartIso || weekStart(today());
     const end = shiftDate(start, 6);
     const list = state.workouts.filter(w => w.date >= start && w.date <= end);
-    let sec = 0, dist = 0, kc = 0, vol = 0;
+    let sec = 0, dist = 0, kc = 0, vol = 0, steps = 0;
     const days = {};
     list.forEach(w => {
       const t = totals(w);
-      sec += t.seconds; dist += t.distanceM; kc += t.kcal; vol += t.volumeKg;
+      sec += t.seconds; dist += t.distanceM; kc += t.kcal; vol += t.volumeKg; steps += t.steps;
       days[w.date] = (days[w.date] || 0) + t.seconds;
     });
     return {
       start, end, count: list.length, sessions: list,
-      seconds: sec, distanceM: dist, kcal: kc, volumeKg: vol,
+      seconds: sec, distanceM: dist, kcal: kc, volumeKg: vol, steps,
       dayCount: Object.keys(days).length, days
     };
   }
@@ -581,13 +595,14 @@
   }
 
   function exportCsv() {
-    const rows = [['date', 'workout', 'station', 'type', 'machine', 'duration_s', 'distance_m', 'kcal', 'sets', 'volume_kg', 'note']];
+    const rows = [['date', 'workout', 'station', 'type', 'machine', 'duration_s', 'distance_m', 'distance_source', 'steps', 'cadence_spm', 'kcal', 'sets', 'volume_kg', 'note']];
     state.workouts.slice().reverse().forEach(w => {
       (w.blocks || []).forEach((b, i) => {
         rows.push([
           w.date, w.title || '', String(i + 1), b.type,
           (machine(b.machineId) || {}).name || b.name || '',
-          blockDuration(b), Math.round(b.distanceM || 0), blockKcal(b),
+          blockDuration(b), Math.round(b.distanceM || 0), b.distanceSource || 'manual',
+          b.steps || 0, b.cadence || 0, blockKcal(b),
           (b.sets || []).length, Math.round(blockVolume(b)), (b.note || '').replace(/[\r\n]+/g, ' ')
         ]);
       });
@@ -621,7 +636,7 @@
     profile, setProfile, age, metric, distLabel, weightLabel,
     machines, machine, machineByTag, addMachine, updateMachine, removeMachine,
     bindTag, unbindTag, machineHistory, lastOn,
-    workouts, workout, saveWorkout, removeWorkout, workoutsOn,
+    workouts, workout, saveWorkout, removeWorkout, workoutsOn, stepsOn,
     live, setLive, patchLive, clearLive,
     plans, plan, addPlan, updatePlan, removePlan,
     blockDuration, blockVolume, blockKcal, totals, elapsed,

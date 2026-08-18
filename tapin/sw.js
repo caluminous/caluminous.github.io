@@ -2,7 +2,7 @@
    signal, so the whole shell is precached and served cache-first, with a
    background refresh so updates still land. */
 
-const CACHE = 'tapin-v1';
+const CACHE = 'tapin-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -10,6 +10,7 @@ const ASSETS = [
   './data.js',
   './store.js',
   './nfc.js',
+  './track.js',
   './session.js',
   './ui.js',
   './app.js',

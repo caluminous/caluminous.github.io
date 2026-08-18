@@ -47,6 +47,33 @@ a heart rate of 160:
 
 An unrecognised tag asks what it is — once. After that it is yours forever.
 
+## Without a machine
+
+Off the tags there is no console to read, so the phone measures it itself.
+
+**Distance by GPS** on runs, rides and walks, with live pace. Raw fixes are far too noisy
+to add up — standing still on a bad fix will happily invent a kilometre — so every fix is
+filtered three ways: anything vaguer than 40 m accuracy is dropped, anything implying an
+impossible speed for that activity is dropped, and movement below a floor scaled to the
+reported accuracy is treated as the dot wandering rather than you moving. The route is
+kept densely enough to draw its shape and no denser.
+
+**Steps by accelerometer**, indoors as well as out, by peak-picking the bounce of your
+stride against a threshold that follows how hard you are actually moving. Cadence comes
+with it, and decays when you stop rather than leaving 170 spm on screen at a crossing.
+
+**The two calibrate each other.** A session with both running measures your real stride
+length — GPS distance divided by steps — and the step counter uses it afterwards, so
+distance keeps being measured on a treadmill or anywhere the signal goes. Until that
+happens the stride is estimated from your height.
+
+Whatever the sensors say, the distance box stays editable, and typing in it hands the
+number to you permanently — with one tap to hand it back.
+
+**What it does not do:** count your steps all day. A web page cannot run in your pocket.
+Steps are counted during a session, while the app is open and the screen is awake, and
+the app says so rather than presenting a session count as a daily one.
+
 ## What it tracks
 
 **Cardio** — a live clock, live pace in whatever unit the machine is spoken in (min/km on a
@@ -82,6 +109,7 @@ tap your way through it. Build one by hand, or from a workout you have already d
 | `data.js` | machine types, effort and pace maths, exercise catalogue, icons |
 | `store.js` | state, persistence, personal bests, streaks, derived totals |
 | `nfc.js` | Web NFC: reading, writing stickers, deep links, error wording |
+| `track.js` | GPS distance, step detection, stride calibration |
 | `session.js` | the live workout engine — stations, sets, splits, rest, tap rules |
 | `ui.js` | sheets, toasts, fields, charts |
 | `app.js` | views and routing |
@@ -89,6 +117,8 @@ tap your way through it. Build one by hand, or from a workout you have already d
 
 ## Browser support
 
-Live tag reading: Chrome for Android 89+. Everything else — logging, history, records,
-plans, and opening the app from a written sticker — works in any modern browser. The app
-says which of those you're in rather than pretending otherwise.
+Live tag reading: Chrome for Android 89+. GPS: everywhere, over HTTPS. Steps: any browser
+with a motion sensor — on iOS you have to grant motion access from a button, which the app
+puts in front of you. Everything else — logging, history, records, plans, and opening the
+app from a written sticker — works in any modern browser. The app says which of those
+you're in rather than pretending otherwise.

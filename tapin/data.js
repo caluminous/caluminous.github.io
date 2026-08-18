@@ -30,7 +30,7 @@
       }
     },
     {
-      id: 'treadmill', name: 'Treadmill', short: 'Tread', kind: 'distance', group: 'cardio',
+      id: 'treadmill', name: 'Treadmill', short: 'Tread', kind: 'distance', group: 'cardio', steps: true,
       unit: 'km', fields: ['distance', 'incline', 'speed'],
       hint: 'Running or walking indoors',
       met: v => acsmMet(v.speedKph || 0, (v.inclinePct || 0) / 100)
@@ -43,13 +43,13 @@
       kcalFn: (v, wt, secs) => ergKcal(v.distanceM, secs, wt)
     },
     {
-      id: 'elliptical', name: 'Cross-trainer', short: 'Cross', kind: 'distance', group: 'cardio',
+      id: 'elliptical', name: 'Cross-trainer', short: 'Cross', kind: 'distance', group: 'cardio', steps: true,
       unit: 'km', fields: ['distance', 'level', 'resistance'],
       hint: 'Elliptical / arc trainer',
       met: v => clamp(4.8 + (v.level || 0) * 0.32 + (v.speedKph || 0) * 0.25, 3.5, 15)
     },
     {
-      id: 'stair', name: 'Stair climber', short: 'Stairs', kind: 'effort', group: 'cardio',
+      id: 'stair', name: 'Stair climber', short: 'Stairs', kind: 'effort', group: 'cardio', steps: true,
       unit: 'floors', fields: ['floors', 'level'],
       hint: 'Stepmill or step machine',
       met: v => clamp(7 + (v.level || 0) * 0.28, 4, 16)
@@ -67,22 +67,22 @@
       kcalFn: (v, wt, secs) => ergKcal(v.distanceM, secs, wt)
     },
     {
-      id: 'run', name: 'Run', short: 'Run', kind: 'distance', group: 'cardio', outdoor: true,
+      id: 'run', name: 'Run', short: 'Run', kind: 'distance', group: 'cardio', outdoor: true, gps: true, steps: true,
       unit: 'km', fields: ['distance', 'incline'],
       met: v => acsmMet(v.speedKph || 0, (v.inclinePct || 0) / 100)
     },
     {
-      id: 'ride', name: 'Ride', short: 'Ride', kind: 'distance', group: 'cardio', outdoor: true,
+      id: 'ride', name: 'Ride', short: 'Ride', kind: 'distance', group: 'cardio', outdoor: true, gps: true,
       unit: 'km', fields: ['distance'],
       met: v => clamp(0.0035 * sq(v.speedKph || 0) + 0.28 * (v.speedKph || 0) + 1.4, 3, 16)
     },
     {
-      id: 'walk', name: 'Walk', short: 'Walk', kind: 'distance', group: 'cardio', outdoor: true,
+      id: 'walk', name: 'Walk', short: 'Walk', kind: 'distance', group: 'cardio', outdoor: true, gps: true, steps: true,
       unit: 'km', fields: ['distance', 'incline'],
       met: v => acsmMet(v.speedKph || 0, (v.inclinePct || 0) / 100)
     },
     {
-      id: 'swim', name: 'Swim', short: 'Swim', kind: 'distance', group: 'cardio', outdoor: true,
+      id: 'swim', name: 'Swim', short: 'Swim', kind: 'distance', group: 'cardio', outdoor: true, gps: true,
       unit: 'm', fields: ['distance'],
       met: v => clamp(5 + (v.speedKph || 0) * 1.8, 4, 14)
     },
@@ -116,7 +116,7 @@
       met: () => 7
     },
     {
-      id: 'other', name: 'Other', short: 'Other', kind: 'effort', group: 'other',
+      id: 'other', name: 'Other', short: 'Other', kind: 'effort', group: 'other', steps: true,
       unit: 'min', fields: [],
       met: () => 5
     }
